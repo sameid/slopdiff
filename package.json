@@ -1,0 +1,20 @@
+{
+	"name": "diffai",
+	"version": "1.0.0",
+	"type": "module",
+	"description": "Terminal diff viewer with staging and file collapse",
+	"main": "index.js",
+	"bin": {
+		"diffai": "./index.js"
+	},
+	"scripts": {
+		"start": "node index.js"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"blessed": "^0.1.81",
+		"shiki": "^4.1.0"
+	}
+}
