@@ -7,14 +7,25 @@ import blessed from "blessed";
 import { execSync } from "child_process";
 import { createHighlighter, bundledLanguages } from "shiki";
 import path from "path";
+import fs from "fs";
 
 // --- Theme config ---
-// Shiki has these built-in: tokyo-night, github-dark, github-light, dracula, nord, etc.
 const args = process.argv.slice(2);
 const themeIdx = args.indexOf("--theme");
-const THEME_NAME = themeIdx !== -1 && args[themeIdx + 1] ? args[themeIdx + 1] : "tokyo-night";
+const INITIAL_THEME = themeIdx !== -1 && args[themeIdx + 1] ? args[themeIdx + 1] : "tokyo-night";
 
-// UI colors per theme (can be extended)
+// Selectable themes: ui key + shiki theme for code highlighting
+const SELECTABLE_THEMES = [
+	{ label: "Tokyo Night",  uiKey: "tokyo-night", shikiTheme: "tokyo-night" },
+	{ label: "Atom One Dark", uiKey: "one-dark",   shikiTheme: "one-dark-pro" },
+	{ label: "OpenCode",      uiKey: "opencode",   shikiTheme: "monokai" },
+];
+
+// Active theme state (mutated on switch)
+let currentThemeIdx = Math.max(0, SELECTABLE_THEMES.findIndex((t) => t.uiKey === INITIAL_THEME));
+let THEME_NAME = SELECTABLE_THEMES[currentThemeIdx].shikiTheme; // used by shiki
+
+// UI colors per theme
 const UI_THEMES = {
 	"tokyo-night": {
 		headerBg: "#1a1b26",
@@ -27,38 +38,49 @@ const UI_THEMES = {
 		stagedBadgeFg: "#9ece6a",
 		viewedBadgeFg: "#565f89",
 		langBadgeFg: "#565f89",
-		addedFg: "#9ece6a",
 		addedBg: "#244032",
-		removedFg: "#f7768e",
 		removedBg: "#452328",
 		hunkHeaderFg: "#bb9af7",
 		bg: "#1a1b26",
 		fg: "#a9b1d6",
 	},
+	"one-dark": {
+		headerBg: "#21252b",
+		headerFg: "#abb2bf",
+		statusBarBg: "#21252b",
+		statusBarFg: "#abb2bf",
+		scrollbarBg: "#3e4451",
+		fileNameFg: "#61afef",
+		fileNameActiveFg: "#e5c07b",
+		stagedBadgeFg: "#98c379",
+		viewedBadgeFg: "#5c6370",
+		langBadgeFg: "#5c6370",
+		addedBg: "#1e3a29",
+		removedBg: "#3b1f1f",
+		hunkHeaderFg: "#c678dd",
+		bg: "#282c34",
+		fg: "#abb2bf",
+	},
+	"opencode": {
+		headerBg: "#141414",
+		headerFg: "#eeeeee",
+		statusBarBg: "#1e1e1e",
+		statusBarFg: "#808080",
+		scrollbarBg: "#3c3c3c",
+		fileNameFg: "#fab283",
+		fileNameActiveFg: "#ffc09f",
+		stagedBadgeFg: "#7fd88f",
+		viewedBadgeFg: "#606060",
+		langBadgeFg: "#606060",
+		addedBg: "#20303b",
+		removedBg: "#37222c",
+		hunkHeaderFg: "#9d7cd8",
+		bg: "#0a0a0a",
+		fg: "#eeeeee",
+	},
 };
 
-// Fallback UI colors if theme not in map
-const DEFAULT_UI = {
-	headerBg: "#000000",
-	headerFg: "#ffffff",
-	statusBarBg: "#ffffff",
-	statusBarFg: "#000000",
-	scrollbarBg: "#444444",
-	fileNameFg: "#ffff00",
-	fileNameActiveFg: "#ffffff",
-	stagedBadgeFg: "#00ff00",
-	viewedBadgeFg: "#888888",
-	langBadgeFg: "#888888",
-	addedFg: "#00ff00",
-	addedBg: "#244032",
-	removedFg: "#ff0000",
-	removedBg: "#452328",
-	hunkHeaderFg: "#00ffff",
-	bg: "#000000",
-	fg: "#ffffff",
-};
-
-const ui = UI_THEMES[THEME_NAME] || DEFAULT_UI;
+let ui = UI_THEMES[SELECTABLE_THEMES[currentThemeIdx].uiKey];
 
 // --- Language detection ---
 
@@ -150,10 +172,10 @@ function detectLanguage(filePath) {
 
 function getGitDiff() {
 	try {
-		return execSync("git diff master..", { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+		return execSync("git diff master", { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
 	} catch {
 		try {
-			return execSync("git diff main..", { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+			return execSync("git diff main", { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
 		} catch {
 			return "";
 		}
@@ -166,6 +188,35 @@ function stageFile(filePath) {
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+// --- .slopdiff session file ---
+
+const SLOPDIFF_PATH = path.join(process.cwd(), ".slopdiff");
+
+function loadSession() {
+	try {
+		return JSON.parse(fs.readFileSync(SLOPDIFF_PATH, "utf-8"));
+	} catch {
+		return {};
+	}
+}
+
+function saveSession(files) {
+	const collapsed = files.filter((f) => f.collapsed).map((f) => f.path);
+	try {
+		fs.writeFileSync(SLOPDIFF_PATH, JSON.stringify({ collapsed }, null, 2));
+	} catch {
+		// silently ignore write errors
+	}
+}
+
+function applySession(files) {
+	const session = loadSession();
+	const collapsedSet = new Set(session.collapsed || []);
+	for (const file of files) {
+		if (collapsedSet.has(file.path)) file.collapsed = true;
 	}
 }
 
@@ -303,11 +354,16 @@ function highlightHunk(highlighter, hunk, language) {
 
 // --- TUI ---
 
-function buildContent(files, cursorFileIdx, highlighter) {
+// lineToFile is rebuilt on every render: lineToFile[lineIdx] = fileIdx
+let lineToFile = [];
+
+function buildContent(files, cursorFileIdx, highlighter, filterUnstaged) {
 	const lines = [];
+	lineToFile = [];
 
 	for (let fi = 0; fi < files.length; fi++) {
 		const file = files[fi];
+		if (filterUnstaged && file.staged) continue;
 		const isCursor = fi === cursorFileIdx;
 		const boldOn = isCursor ? "\x1b[1m\x1b[4m" : "";
 		const boldOff = isCursor ? ANSI_RESET : "";
@@ -318,10 +374,12 @@ function buildContent(files, cursorFileIdx, highlighter) {
 
 		const nameFg = isCursor ? ui.fileNameActiveFg : ui.fileNameFg;
 		lines.push(`${boldOn}${hexToAnsi(nameFg)}${collapseIcon} ${file.path}${ANSI_RESET}${boldOff}${langTag}${stagedTag}${viewedTag}`);
+		lineToFile.push(fi);
 
 		if (!file.collapsed) {
 			for (const hunk of file.hunks) {
 				lines.push(`  ${hexToAnsi(ui.hunkHeaderFg)}${hunk.header}${ANSI_RESET}`);
+				lineToFile.push(fi);
 
 				const highlighted = highlightHunk(highlighter, hunk, file.language);
 				for (const { prefix: p, tokens, raw } of highlighted) {
@@ -335,9 +393,11 @@ function buildContent(files, cursorFileIdx, highlighter) {
 						const ct = tokens ? tokensToAnsi(tokens) : raw;
 						lines.push(`  ${ct}`);
 					}
+					lineToFile.push(fi);
 				}
 			}
 			lines.push(""); // spacer
+			lineToFile.push(fi);
 		}
 	}
 
@@ -363,6 +423,7 @@ function getFileLineOffset(files, fileIdx) {
 async function main() {
 	const rawDiff = getGitDiff();
 	const files = parseDiff(rawDiff);
+	applySession(files);
 
 	if (files.length === 0) {
 		console.log("No diff found against master (or main). Nothing to show.");
@@ -372,17 +433,18 @@ async function main() {
 	// Collect unique languages from the diff
 	const langs = [...new Set(files.map((f) => f.language).filter(Boolean))];
 
-	// Initialize shiki highlighter with only the needed languages
+	// Initialize shiki highlighter with all selectable shiki themes
 	const highlighter = await createHighlighter({
-		themes: [THEME_NAME],
+		themes: SELECTABLE_THEMES.map((t) => t.shikiTheme),
 		langs: langs.length > 0 ? langs : ["text"],
 	});
 
 	let cursorFileIdx = 0;
+	let filterUnstaged = false;
 
 	const screen = blessed.screen({
 		smartCSR: true,
-		title: "diffai",
+		title: "slopdiff",
 		fullUnicode: true,
 	});
 
@@ -391,16 +453,25 @@ async function main() {
 		left: 0,
 		width: "100%",
 		height: 3,
-		content: `{center}{bold}diffai{/bold} {${ui.fg}-fg}j/k: navigate | enter/c: collapse | s: stage | q: quit{/${ui.fg}-fg}{/center}`,
+		content: `{center}{bold}slopdiff{/bold} {${ui.fg}-fg}j/k: navigate | enter/c: collapse | s: stage | f: filter | t: theme | r: refresh | q: quit{/${ui.fg}-fg}{/center}`,
 		tags: true,
 		style: { fg: ui.headerFg, bg: ui.headerBg },
 	});
 
-	const diffBox = blessed.box({
+	const stickyHeader = blessed.box({
 		top: 3,
 		left: 0,
 		width: "100%",
-		height: "100%-4",
+		height: 1,
+		tags: false,
+		style: { fg: ui.headerFg, bg: ui.headerBg },
+	});
+
+	const diffBox = blessed.box({
+		top: 4,
+		left: 0,
+		width: "100%",
+		height: "100%-5",
 		scrollable: true,
 		alwaysScroll: true,
 		scrollbar: {
@@ -424,13 +495,95 @@ async function main() {
 	});
 
 	screen.append(header);
+	screen.append(stickyHeader);
 	screen.append(diffBox);
 	screen.append(statusBar);
 
+	// --- Theme selector overlay ---
+
+	const themeList = blessed.list({
+		top: "center",
+		left: "center",
+		width: 36,
+		height: SELECTABLE_THEMES.length + 4,
+		border: { type: "line" },
+		label: " Select Theme ",
+		tags: true,
+		keys: true,
+		vi: true,
+		hidden: true,
+		style: {
+			border: { fg: "#fab283" },
+			label: { fg: "#fab283" },
+			fg: "#eeeeee",
+			bg: "#1e1e1e",
+			selected: { fg: "#0a0a0a", bg: "#fab283" },
+		},
+		items: SELECTABLE_THEMES.map((t) => `  ${t.label}`),
+	});
+	screen.append(themeList);
+
+	function applyTheme(idx) {
+		currentThemeIdx = idx;
+		THEME_NAME = SELECTABLE_THEMES[idx].shikiTheme;
+		ui = UI_THEMES[SELECTABLE_THEMES[idx].uiKey];
+		// Update widget styles to new theme colors
+		header.style.fg = ui.headerFg;
+		header.style.bg = ui.headerBg;
+		stickyHeader.style.fg = ui.headerFg;
+		stickyHeader.style.bg = ui.headerBg;
+		diffBox.style.fg = ui.fg;
+		diffBox.style.bg = ui.bg;
+		statusBar.style.fg = ui.statusBarFg;
+		statusBar.style.bg = ui.statusBarBg;
+	}
+
+	screen.key(["t"], () => {
+		themeList.select(currentThemeIdx);
+		themeList.show();
+		themeList.focus();
+		screen.render();
+	});
+
+	themeList.key(["escape", "q"], () => {
+		themeList.hide();
+		diffBox.focus();
+		screen.render();
+	});
+
+	themeList.on("select", (_, idx) => {
+		applyTheme(idx);
+		themeList.hide();
+		diffBox.focus();
+		render();
+	});
+
+	function updateStickyHeader() {
+		const visibleFileIdx = getVisibleFileIdx();
+		const file = files[visibleFileIdx];
+		const collapseIcon = file.collapsed ? "\u25b6" : "\u25bc";
+		const langPart = file.language ? ` ${hexToAnsi(ui.langBadgeFg)}(${file.language})${ANSI_RESET}` : "";
+		const stagedPart = file.staged ? ` ${hexToAnsi(ui.stagedBadgeFg)}[STAGED]${ANSI_RESET}` : "";
+		const isCursor = visibleFileIdx === cursorFileIdx;
+		const nameFg = isCursor ? ui.fileNameActiveFg : ui.fileNameFg;
+		const boldOn = isCursor ? "\x1b[1m" : "";
+		stickyHeader.setContent(
+			` ${boldOn}${hexToAnsi(nameFg)}${collapseIcon} ${file.path}${ANSI_RESET}${langPart}${stagedPart}  ${hexToAnsi(ui.viewedBadgeFg)}${visibleFileIdx + 1}/${files.length}${ANSI_RESET}`,
+		);
+	}
+
+	function getVisibleFileIdx() {
+		const scrollPos = diffBox.childBase;
+		return lineToFile[scrollPos] ?? lineToFile[lineToFile.length - 1] ?? 0;
+	}
+
 	function render() {
-		diffBox.setContent(buildContent(files, cursorFileIdx, highlighter));
+		diffBox.setContent(buildContent(files, cursorFileIdx, highlighter, filterUnstaged));
 		const staged = files.filter((f) => f.staged).length;
-		statusBar.setContent(` File ${cursorFileIdx + 1}/${files.length} | ${staged} staged | ${files[cursorFileIdx].path} | theme: ${THEME_NAME}`);
+		const themeName = SELECTABLE_THEMES[currentThemeIdx].label;
+		const visibleIdx = getVisibleFileIdx();
+		statusBar.setContent(` File ${visibleIdx + 1}/${files.length} | ${staged} staged | ${files[visibleIdx].path} | theme: ${themeName}${filterUnstaged ? "  [unstaged only]" : ""}`);
+		updateStickyHeader();
 		screen.render();
 	}
 
@@ -442,6 +595,22 @@ async function main() {
 
 	// Key bindings
 	screen.key(["q", "C-c"], () => process.exit(0));
+
+	screen.key(["r"], () => {
+		const rawDiff = getGitDiff();
+		const refreshed = parseDiff(rawDiff);
+		applySession(refreshed);
+		files.length = 0;
+		files.push(...refreshed);
+		cursorFileIdx = Math.min(cursorFileIdx, Math.max(0, files.length - 1));
+		render();
+	});
+
+	screen.key(["f"], () => {
+		filterUnstaged = !filterUnstaged;
+		cursorFileIdx = 0;
+		render();
+	});
 
 	screen.key(["j"], () => {
 		if (cursorFileIdx < files.length - 1) {
@@ -460,27 +629,31 @@ async function main() {
 		}
 	});
 
-	screen.key(["down"], () => {
-		diffBox.scroll(1);
+	function renderScroll() {
+		const staged = files.filter((f) => f.staged).length;
+		const themeName = SELECTABLE_THEMES[currentThemeIdx].label;
+		const visibleIdx = getVisibleFileIdx();
+		statusBar.setContent(` File ${visibleIdx + 1}/${files.length} | ${staged} staged | ${files[visibleIdx].path} | theme: ${themeName}${filterUnstaged ? "  [unstaged only]" : ""}`);
+		updateStickyHeader();
 		screen.render();
-	});
+	}
 
-	screen.key(["up"], () => {
-		diffBox.scroll(-1);
-		screen.render();
-	});
+	screen.key(["down"], () => { diffBox.scroll(1);  renderScroll(); });
+	screen.key(["up"],   () => { diffBox.scroll(-1); renderScroll(); });
 
 	screen.key(["enter", "c"], () => {
-		files[cursorFileIdx].collapsed = !files[cursorFileIdx].collapsed;
-		if (files[cursorFileIdx].collapsed) {
-			files[cursorFileIdx].viewed = true;
+		const idx = getVisibleFileIdx();
+		files[idx].collapsed = !files[idx].collapsed;
+		if (files[idx].collapsed) {
+			files[idx].viewed = true;
 		}
+		saveSession(files);
 		render();
-		scrollToFile(cursorFileIdx);
+		scrollToFile(idx);
 	});
 
 	screen.key(["s"], () => {
-		const file = files[cursorFileIdx];
+		const file = files[getVisibleFileIdx()];
 		if (!file.staged) {
 			const ok = stageFile(file.path);
 			if (ok) {
@@ -490,25 +663,10 @@ async function main() {
 		}
 	});
 
-	screen.key(["C-d"], () => {
-		diffBox.scroll(Math.floor(diffBox.height / 2));
-		screen.render();
-	});
-
-	screen.key(["C-u"], () => {
-		diffBox.scroll(-Math.floor(diffBox.height / 2));
-		screen.render();
-	});
-
-	screen.key(["pagedown", "space"], () => {
-		diffBox.scroll(diffBox.height - 2);
-		screen.render();
-	});
-
-	screen.key(["pageup"], () => {
-		diffBox.scroll(-(diffBox.height - 2));
-		screen.render();
-	});
+	screen.key(["C-d"], () => { diffBox.scroll(Math.floor(diffBox.height / 2));   renderScroll(); });
+	screen.key(["C-u"], () => { diffBox.scroll(-Math.floor(diffBox.height / 2));  renderScroll(); });
+	screen.key(["pagedown", "space"], () => { diffBox.scroll(diffBox.height - 2); renderScroll(); });
+	screen.key(["pageup"], () => { diffBox.scroll(-(diffBox.height - 2));         renderScroll(); });
 
 	// --- Neoscroll-style smooth animated scrolling (Shift+Up / Shift+Down) ---
 
@@ -540,7 +698,7 @@ async function main() {
 				if (delta !== 0) {
 					diffBox.scroll(delta);
 					scrolled = targetScrolled;
-					screen.render();
+					renderScroll();
 				}
 
 				if (progress >= 1) {

@@ -53,3 +53,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# slopdiff session file
+.slopdiff
