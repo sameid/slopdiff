@@ -787,6 +787,40 @@ async function main() {
 	// --- State: which overlay is active ---
 	let activeOverlay = null; // "theme" | "cmd" | null
 
+	// --- Smooth scroll (neoscroll-style, Shift+Up/Down) ---
+
+	let scrollAnimation = null;
+
+	function easeInOutSine(t) {
+		return -(Math.cos(Math.PI * t) - 1) / 2;
+	}
+
+	function smoothScroll(totalLines, duration) {
+		if (scrollAnimation) {
+			clearInterval(scrollAnimation.timer);
+			scrollAnimation = null;
+		}
+		const startTime = Date.now();
+		let scrolled = 0;
+		scrollAnimation = {
+			timer: setInterval(() => {
+				const elapsed = Date.now() - startTime;
+				const progress = Math.min(elapsed / duration, 1);
+				const targetScrolled = Math.round(easeInOutSine(progress) * totalLines);
+				const delta = targetScrolled - scrolled;
+				if (delta !== 0) {
+					scrollBox.scrollBy(delta);
+					scrolled = targetScrolled;
+					renderScroll();
+				}
+				if (progress >= 1) {
+					clearInterval(scrollAnimation.timer);
+					scrollAnimation = null;
+				}
+			}, 16),
+		};
+	}
+
 	// --- Keyboard input ---
 	renderer.keyInput.on("keypress", (key) => {
 		// If theme selector is visible
@@ -931,13 +965,21 @@ async function main() {
 				break;
 
 			case "down":
-				scrollBox.scrollBy(1);
-				renderScroll();
+				if (key.shift) {
+					smoothScroll(Math.floor(scrollBox.height / 2), 150);
+				} else {
+					scrollBox.scrollBy(1);
+					renderScroll();
+				}
 				break;
 
 			case "up":
-				scrollBox.scrollBy(-1);
-				renderScroll();
+				if (key.shift) {
+					smoothScroll(-Math.floor(scrollBox.height / 2), 150);
+				} else {
+					scrollBox.scrollBy(-1);
+					renderScroll();
+				}
 				break;
 
 			case "pagedown":
