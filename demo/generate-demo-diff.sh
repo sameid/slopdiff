@@ -14,35 +14,42 @@ diff --git a/src/cache.js b/src/cache.js
 index 8f3a1b2..c4d9e07 100644
 --- a/src/cache.js
 +++ b/src/cache.js
-@@ -1,21 +1,30 @@
--// A tiny in-memory cache.
+@@ -1,24 +1,36 @@
+-// A tiny in-memory cache keyed by string with a single global expiry.
 -class Cache {
--  constructor(ttl = 60) {
+-  constructor(ttlSeconds = 60) {
 -    this.store = new Map();
--    this.ttl = ttl;
+-    this.ttlSeconds = ttlSeconds;
 -  }
-+// A tiny in-memory cache with TTL support.
++/**
++ * A small in-memory cache with per-entry TTL and optional max-size eviction.
++ * Entries are stored as { timestamp, value } so each key expires independently.
++ */
 +class Cache {
-+  constructor(ttl = 60) {
++  constructor({ ttlSeconds = 60, maxEntries = 1000 } = {}) {
 +    this.store = new Map();
-+    this.ttl = ttl * 1000;
++    this.ttlMillis = ttlSeconds * 1000;
++    this.maxEntries = maxEntries;
 +  }
 
    get(key) {
 -    return this.store.get(key);
-+    const hit = this.store.get(key);
-+    if (hit === undefined) return null;
-+    const { ts, value } = hit;
-+    if (Date.now() - ts > this.ttl) {
++    const entry = this.store.get(key);
++    if (entry === undefined) return null;
++    if (Date.now() - entry.timestamp > this.ttlMillis) {
 +      this.store.delete(key);
 +      return null;
 +    }
-+    return value;
++    return entry.value;
    }
 
    set(key, value) {
 -    this.store.set(key, value);
-+    this.store.set(key, { ts: Date.now(), value });
++    if (this.store.size >= this.maxEntries && !this.store.has(key)) {
++      const oldestKey = this.store.keys().next().value;
++      this.store.delete(oldestKey);
++    }
++    this.store.set(key, { timestamp: Date.now(), value });
    }
  }
 
@@ -52,38 +59,41 @@ diff --git a/src/server.js b/src/server.js
 index 1a2b3c4..5d6e7f8 100644
 --- a/src/server.js
 +++ b/src/server.js
-@@ -8,10 +8,14 @@ import Cache from "./cache.js";
+@@ -8,12 +8,18 @@ import Cache from "./cache.js";
 
  const app = express();
--const cache = new Cache();
-+const cache = new Cache(120);
+-const userCache = new Cache();
++const userCache = new Cache({ ttlSeconds: 120, maxEntries: 5000 });
 
- app.get("/users/:id", async (req, res) => {
--  const user = await db.fetchUser(req.params.id);
+ app.get("/users/:id", async (req, res, next) => {
+-  const user = await db.fetchUserById(req.params.id);
 -  res.json(user);
-+  const key = `user:${req.params.id}`;
-+  const cached = cache.get(key);
-+  if (cached !== null) return res.json(cached);
++  const cacheKey = `user:${req.params.id}`;
++  const cachedUser = userCache.get(cacheKey);
++  if (cachedUser !== null) {
++    res.set("X-Cache", "HIT").json(cachedUser);
++    return;
++  }
 +
-+  const user = await db.fetchUser(req.params.id);
-+  cache.set(key, user);
-+  res.json(user);
++  const user = await db.fetchUserById(req.params.id);
++  userCache.set(cacheKey, user);
++  res.set("X-Cache", "MISS").json(user);
  });
 diff --git a/README.md b/README.md
 index 7c8d9e0..2f1a3b4 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,6 +1,8 @@
+@@ -1,7 +1,9 @@
  # nimbus
 
--A small async API service.
-+A small async API service with response caching.
+-A small async API service built on top of Express and a thin database layer.
++A small async API service built on Express with a thin database layer and TTL response caching.
 
  ## Features
 
- - Async request handling
-+- In-memory TTL cache
-+- Zero external dependencies
+ - Async request handling with structured error middleware
++- In-memory TTL cache with per-entry expiry and size-bounded eviction
++- Cache hit/miss reporting via the `X-Cache` response header
 diff --git a/src/utils/timer.js b/src/clock.js
 similarity index 84%
 rename from src/utils/timer.js
@@ -91,11 +101,13 @@ rename to src/clock.js
 index 9e0f1a2..3b4c5d6 100644
 --- a/src/utils/timer.js
 +++ b/src/clock.js
-@@ -1,3 +1,3 @@
+@@ -1,5 +1,5 @@
+-// Returns the current wall-clock time in milliseconds since the Unix epoch.
 -export function now() {
 -  return Date.now();
 -}
++// Returns a high-resolution monotonic timestamp suitable for measuring durations.
 +export function now() {
 +  return performance.now();
 +}
-DIFFIFF
+DIFFIFFIFF
