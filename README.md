@@ -12,7 +12,7 @@ curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 
 ## Features
 
-- **Syntax highlighted diffs** — powered by [Shiki](https://shiki.matsu.io/) with full truecolor support
+- **Syntax highlighted diffs** — powered by [Tree-sitter](https://tree-sitter.github.io/) via [OpenTUI](https://github.com/opentui/opentui) with full truecolor support
 - **File navigation** — jump between changed files with `j`/`k`
 - **Collapse / expand** — hide file diffs you've already reviewed, persisted across sessions via `.slopdiff`
 - **Staging** — stage individual files with `s` directly from the viewer
@@ -55,13 +55,13 @@ Download the binary for your platform from `https://cdn.sameidusmani.com/slopdif
 
 ### From source
 
-Requires [Node.js](https://nodejs.org) and [Bun](https://bun.sh).
+Requires [Bun](https://bun.sh).
 
 ```bash
 git clone https://github.com/sameidusmani/slopdiff
 cd slopdiff
-npm install
-npm start
+bun install
+bun start
 ```
 
 ---
@@ -135,16 +135,18 @@ Requires [Bun](https://bun.sh).
 
 ```bash
 # Bump version in package.json, then:
-npm run build
+bun run build
 ```
 
 This will:
 
 1. Inject the version into `index.js`
-2. Generate `install.sh` with the versioned download URL
-3. Compile binaries for all platforms into `dist/v{version}/`
+2. Generate `install.sh` and `uninstall.sh` with the versioned download URL
+3. Compile a binary for the current platform into `dist/bin/v{version}/`
 
-Upload the contents of `dist/v{version}/` and the updated `install.sh` to your server.
+> **Note:** slopdiff uses a native addon ([OpenTUI](https://github.com/opentui/opentui)) that cannot be cross-compiled. Each platform binary must be built on its native host. Run `bun run build` on macOS arm64, macOS x64, Linux x64, and Linux arm64 separately to produce all binaries.
+
+Upload the contents of `dist/bin/v{version}/` and the updated `install.sh` / `uninstall.sh` to your server.
 
 ---
 
