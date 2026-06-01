@@ -11,12 +11,12 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 const VERSION = "0.2.0"
@@ -694,8 +694,8 @@ func (m *model) buildContent() {
 }
 
 func (m *model) viewportHeight() int {
-	// header(3) + sticky(1) + status(1) = 5 lines of chrome
-	return m.height - 5
+	// header(1) + sticky(1) + status(1) = 3 lines of chrome
+	return m.height - 3
 }
 
 func (m *model) scrollToFile(idx int) {
@@ -745,25 +745,23 @@ func (m model) View() string {
 	}
 
 	t := m.theme()
-	var sb strings.Builder
 
-	// Header (3 lines: border + content + border)
-	headerStyle := lipgloss.NewStyle().
-		Width(m.width).
-		Height(3).
-		Background(lipgloss.Color(t.HeaderBg)).
-		Foreground(lipgloss.Color(t.HeaderFg)).
-		Align(lipgloss.Center).
-		AlignVertical(lipgloss.Center)
-	headerText := "slopdiff  j/k: navigate | enter/c: collapse | C/E: all | s: stage | f: filter | e: command | t: theme | r: refresh | q: quit"
-	sb.WriteString(headerStyle.Render(headerText))
-	sb.WriteString("\n")
+	// Layout: header (1 line) + sticky (1 line) + viewport (height-3) + status (1 line)
+	vpHeight := m.height - 3
+	if vpHeight < 1 {
+		vpHeight = 1
+	}
 
-	// Sticky header (1 line)
-	stickyStyle := lipgloss.NewStyle().
-		Width(m.width).
-		Background(lipgloss.Color(t.StickyHeaderBg)).
-		Foreground(lipgloss.Color(t.StickyHeaderFg))
+	bgEsc := bgColor(t.Bg)
+	fgEsc := fgColorEsc(t.Fg)
+
+	var output []string
+
+	// ── Header (1 line) ──
+	headerContent := "slopdiff  j/k: navigate | enter/c: collapse | C/E: all | s: stage | f: filter | e: cmd | t: theme | r: refresh | q: quit"
+	output = append(output, m.renderFullWidthLine(headerContent, t.HeaderBg, t.HeaderFg))
+
+	// ── Sticky header (1 line) ──
 	var stickyText string
 	if len(m.files) == 0 {
 		stickyText = " [No files]"
@@ -782,19 +780,9 @@ func (m model) View() string {
 		}
 		stickyText += fmt.Sprintf("  %d/%d", m.cursorFileIdx+1, len(m.files))
 	}
-	sb.WriteString(stickyStyle.Render(stickyText))
-	sb.WriteString("\n")
+	output = append(output, m.renderFullWidthLine(stickyText, t.StickyHeaderBg, t.StickyHeaderFg))
 
-	// Diff viewport — render lines with explicit ANSI bg to avoid lipgloss/reset conflicts
-	vpHeight := m.viewportHeight()
-	if vpHeight < 0 {
-		vpHeight = 0
-	}
-
-	bgEsc := bgColor(t.Bg)
-	fgEsc := fgColorEsc(t.Fg)
-
-	// Slice visible lines
+	// ── Diff viewport (vpHeight lines) ──
 	start := m.scrollOffset
 	end := start + vpHeight
 	if end > len(m.lines) {
@@ -804,30 +792,21 @@ func (m model) View() string {
 	if start < len(m.lines) {
 		visibleLines = m.lines[start:end]
 	}
-	// Render each line with explicit space padding to fill bg to full width
 	for _, line := range visibleLines {
 		content := " " + line
-		visWidth := lipgloss.Width(content)
-		padN := m.width - visWidth
+		visW := visibleWidth(content)
+		padN := m.width - visW
 		if padN < 0 {
 			padN = 0
 		}
-		sb.WriteString(bgEsc + fgEsc + content + "\x1b[39m" + bgEsc + strings.Repeat(" ", padN) + "\x1b[0m")
-		sb.WriteString("\n")
+		output = append(output, bgEsc+fgEsc+content+bgEsc+strings.Repeat(" ", padN)+"\x1b[0m")
 	}
-	// Pad remaining viewport lines with bg
-	emptyLine := bgEsc + strings.Repeat(" ", m.width) + "\x1b[0m"
+	// Fill remaining viewport with empty bg lines
 	for i := len(visibleLines); i < vpHeight; i++ {
-		sb.WriteString(emptyLine)
-		sb.WriteString("\n")
+		output = append(output, bgEsc+strings.Repeat(" ", m.width)+"\x1b[0m")
 	}
 
-	// Status bar (1 line)
-	statusStyle := lipgloss.NewStyle().
-		Width(m.width).
-		Background(lipgloss.Color(t.StatusBarBg)).
-		Foreground(lipgloss.Color(t.StatusBarFg))
-
+	// ── Status bar (1 line) ──
 	var statusText string
 	if len(m.files) == 0 {
 		statusText = fmt.Sprintf(" No files | theme: %s", t.Label)
@@ -845,25 +824,64 @@ func (m model) View() string {
 		statusText += "  [working tree]"
 	}
 	versionRight := fmt.Sprintf("v%s ", VERSION)
-	padding := m.width - lipgloss.Width(statusText) - len(versionRight)
-	if padding < 0 {
-		padding = 0
+	pad := m.width - visibleWidth(statusText) - len(versionRight)
+	if pad < 0 {
+		pad = 0
 	}
-	statusText += strings.Repeat(" ", padding) + versionRight
-	sb.WriteString(statusStyle.Render(statusText))
+	statusText += strings.Repeat(" ", pad) + versionRight
+	output = append(output, m.renderFullWidthLine(statusText, t.StatusBarBg, t.StatusBarFg))
 
-	// Overlays
+	result := strings.Join(output, "\n")
+
+	// Overlays (rendered as absolute positioned via ANSI cursor movement)
 	if m.mode == modeThemeSelect {
-		sb.WriteString(m.renderThemeOverlay())
+		result = m.overlayOnResult(result, m.renderThemeOverlayLines())
 	}
 	if m.mode == modeCmdInput {
-		sb.WriteString(m.renderCmdOverlay())
+		result = m.overlayOnResult(result, m.renderCmdOverlayLines())
 	}
 
-	return sb.String()
+	return result
 }
 
-func (m model) renderThemeOverlay() string {
+// renderFullWidthLine renders a line with bg/fg filling to full terminal width
+func (m model) renderFullWidthLine(text, bgHex, fgHex string) string {
+	bg := bgColor(bgHex)
+	fg := fgColorEsc(fgHex)
+	visW := visibleWidth(text)
+	padN := m.width - visW
+	if padN < 0 {
+		padN = 0
+	}
+	return bg + fg + text + strings.Repeat(" ", padN) + "\x1b[0m"
+}
+
+// overlayOnResult places overlay lines centered on the output
+func (m model) overlayOnResult(result string, overlayLines []string) string {
+	lines := strings.Split(result, "\n")
+	startRow := m.height/2 - len(overlayLines)/2
+	startCol := m.width/2 - visibleWidth(overlayLines[0])/2
+	if startCol < 0 {
+		startCol = 0
+	}
+	for i, ol := range overlayLines {
+		row := startRow + i
+		if row >= 0 && row < len(lines) {
+			// Replace the section of the line with the overlay content
+			bg := bgColor("#1e1e1e")
+			fg := fgColorEsc("#eeeeee")
+			lines[row] = lines[row][:0] + strings.Repeat(" ", startCol) + bg + fg + ol + "\x1b[0m"
+			// Pad to width
+			visW := visibleWidth(lines[row])
+			if visW < m.width {
+				lines[row] += bgColor(m.theme().Bg) + strings.Repeat(" ", m.width-visW) + "\x1b[0m"
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderThemeOverlayLines() []string {
 	var lines []string
 	lines = append(lines, "┌─ Select Theme ──────────────────┐")
 	for i, t := range themes {
@@ -874,24 +892,16 @@ func (m model) renderThemeOverlay() string {
 		lines = append(lines, fmt.Sprintf("│ %s%-30s │", prefix, t.Label))
 	}
 	lines = append(lines, "└──────────────────────────────────┘")
-
-	overlay := strings.Join(lines, "\n")
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#eeeeee")).
-		Background(lipgloss.Color("#1e1e1e")).
-		MarginTop(m.height/2 - len(lines)/2).
-		MarginLeft(m.width/2 - 18)
-	return "\n" + style.Render(overlay)
+	return lines
 }
 
-func (m model) renderCmdOverlay() string {
+func (m model) renderCmdOverlayLines() []string {
 	boxWidth := m.width * 60 / 100
 	if boxWidth < 40 {
 		boxWidth = 40
 	}
 	innerWidth := boxWidth - 4
 
-	// Show cursor in input
 	display := m.cmdInputValue
 	if m.cmdCursorPos <= len(display) {
 		display = display[:m.cmdCursorPos] + "█" + display[m.cmdCursorPos:]
@@ -901,16 +911,10 @@ func (m model) renderCmdOverlay() string {
 	}
 
 	top := "┌─ Diff command " + strings.Repeat("─", boxWidth-17) + "┐"
-	mid := "│ " + display + strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(display))) + " │"
+	mid := "│ " + display + strings.Repeat(" ", max(0, innerWidth-visibleWidth(display))) + " │"
 	bot := "└" + strings.Repeat("─", boxWidth-2) + "┘"
 
-	overlay := top + "\n" + mid + "\n" + bot
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#eeeeee")).
-		Background(lipgloss.Color("#1e1e1e")).
-		MarginTop(m.height/2 - 2).
-		MarginLeft((m.width - boxWidth) / 2)
-	return "\n" + style.Render(overlay)
+	return []string{top, mid, bot}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -943,6 +947,14 @@ func bgColor(hex string) string {
 	g := hexVal(hex[3:5])
 	b := hexVal(hex[5:7])
 	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+}
+
+// ansiRe matches all ANSI escape sequences (CSI, OSC, etc.)
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x1b\\|\x1b\][^\x07]*\x07`)
+
+func visibleWidth(s string) int {
+	clean := ansiRe.ReplaceAllString(s, "")
+	return utf8.RuneCountInString(clean)
 }
 
 func hexVal(s string) int {
