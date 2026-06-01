@@ -8,17 +8,13 @@
 		"slopdiff": "./index.js"
 	},
 	"scripts": {
-		"start": "node index.js",
-		"build": "node build.js"
+		"start": "bun index.js",
+		"build": "bun build.js"
 	},
 	"keywords": [],
 	"author": "",
 	"license": "MIT",
 	"dependencies": {
-		"blessed": "^0.1.81",
-		"shiki": "^4.1.0"
-	},
-	"devDependencies": {
-		"esbuild": "^0.28.0"
+		"@opentui/core": "latest"
 	}
 }

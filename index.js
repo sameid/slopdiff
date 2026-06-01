@@ -1,13 +1,54 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
-// Force color support
-process.env.FORCE_COLOR = "1";
-
-import blessed from "blessed";
+import {
+	createCliRenderer,
+	BoxRenderable,
+	TextRenderable,
+	TextAttributes,
+	ScrollBoxRenderable,
+	DiffRenderable,
+	SelectRenderable,
+	SelectRenderableEvents,
+	InputRenderable,
+	InputRenderableEvents,
+	SyntaxStyle,
+	RGBA,
+	addDefaultParsers,
+	getTreeSitterClient,
+} from "@opentui/core";
 import { execSync } from "child_process";
-import { createHighlighter, bundledLanguages } from "shiki";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ASSETS_DIR = path.resolve(__dirname, "node_modules/@opentui/core/assets");
+
+// Register bundled Tree-sitter parsers for syntax highlighting
+addDefaultParsers([
+	{
+		filetype: "javascript",
+		aliases: ["jsx"],
+		wasm: `${ASSETS_DIR}/javascript/tree-sitter-javascript.wasm`,
+		queries: { highlights: [`${ASSETS_DIR}/javascript/highlights.scm`] },
+	},
+	{
+		filetype: "typescript",
+		aliases: ["tsx"],
+		wasm: `${ASSETS_DIR}/typescript/tree-sitter-typescript.wasm`,
+		queries: { highlights: [`${ASSETS_DIR}/typescript/highlights.scm`] },
+	},
+	{
+		filetype: "zig",
+		wasm: `${ASSETS_DIR}/zig/tree-sitter-zig.wasm`,
+		queries: { highlights: [`${ASSETS_DIR}/zig/highlights.scm`] },
+	},
+	{
+		filetype: "markdown",
+		wasm: `${ASSETS_DIR}/markdown/tree-sitter-markdown.wasm`,
+		queries: { highlights: [`${ASSETS_DIR}/markdown/highlights.scm`] },
+	},
+]);
 
 const VERSION = "0.1.1";
 
@@ -19,19 +60,17 @@ if (args.includes("--version") || args.includes("-v")) {
 	process.exit(0);
 }
 
-if (args[0] === "update") {
-	runUpdate().then(() => process.exit(0)).catch((e) => {
-		console.error(`  ✗ ${e.message}`);
-		process.exit(1);
-	});
-} else {
-	startTUI();
-}
+// --- Config ---
+
+const cmdIdx = args.indexOf("--cmd");
+const INITIAL_CMD = cmdIdx !== -1 && args[cmdIdx + 1] ? args[cmdIdx + 1] : null;
+const themeIdx = args.indexOf("--theme");
+const INITIAL_THEME =
+	themeIdx !== -1 && args[themeIdx + 1] ? args[themeIdx + 1] : "tokyo-night";
 
 async function runUpdate() {
 	const CDN = "https://cdn.sameidusmani.com/slopdiff";
 
-	// Detect platform
 	const os = process.platform;
 	const arch = process.arch;
 	let binary;
@@ -40,11 +79,10 @@ async function runUpdate() {
 	else if (os === "linux" && arch === "x64") binary = "slopdiff-linux-x64";
 	else if (os === "linux" && arch === "arm64") binary = "slopdiff-linux-arm64";
 	else {
-		console.error(`  ✗ Unsupported platform: ${os}/${arch}`);
+		console.error(`  \u2717 Unsupported platform: ${os}/${arch}`);
 		process.exit(1);
 	}
 
-	// Fetch latest version by parsing the version out of install.sh
 	let latestVersion;
 	try {
 		const res = await fetch(`${CDN}/install.sh`);
@@ -54,21 +92,18 @@ async function runUpdate() {
 		if (!match) throw new Error("Could not parse version from install.sh");
 		latestVersion = match[1];
 	} catch (e) {
-		console.error(`  ✗ Could not fetch latest version: ${e.message}`);
+		console.error(`  \u2717 Could not fetch latest version: ${e.message}`);
 		process.exit(1);
 	}
 
 	if (latestVersion === VERSION) {
-		console.log(`  ✓ Already up to date (v${VERSION})`);
+		console.log(`  \u2713 Already up to date (v${VERSION})`);
 		return;
 	}
 
-	console.log(`  → Updating slopdiff v${VERSION} → v${latestVersion}...`);
+	console.log(`  \u2192 Updating slopdiff v${VERSION} \u2192 v${latestVersion}...`);
 
-	// Determine install path (the currently running executable)
 	const selfPath = process.execPath;
-
-	// Download new binary
 	const url = `${CDN}/bin/v${latestVersion}/${binary}`;
 	let data;
 	try {
@@ -76,50 +111,39 @@ async function runUpdate() {
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		data = Buffer.from(await res.arrayBuffer());
 	} catch (e) {
-		console.error(`  ✗ Download failed: ${e.message}`);
+		console.error(`  \u2717 Download failed: ${e.message}`);
 		process.exit(1);
 	}
 
-	// Write to a temp file next to self, then rename (atomic swap)
 	const tmpPath = selfPath + ".tmp";
 	try {
 		fs.writeFileSync(tmpPath, data, { mode: 0o755 });
 		fs.renameSync(tmpPath, selfPath);
-	} catch (e) {
-		// If rename fails (e.g. cross-device), fall back to copy+delete
+	} catch {
 		try {
 			fs.copyFileSync(tmpPath, selfPath);
 			fs.chmodSync(selfPath, 0o755);
 			fs.unlinkSync(tmpPath);
 		} catch (e2) {
-			console.error(`  ✗ Failed to replace binary: ${e2.message}`);
+			console.error(`  \u2717 Failed to replace binary: ${e2.message}`);
 			process.exit(1);
 		}
 	}
 
-	console.log(`  ✓ slopdiff updated to v${latestVersion}`);
+	console.log(`  \u2713 slopdiff updated to v${latestVersion}`);
 }
 
-const cmdIdx = args.indexOf("--cmd");
-const INITIAL_CMD = cmdIdx !== -1 && args[cmdIdx + 1] ? args[cmdIdx + 1] : null;
-const themeIdx = args.indexOf("--theme");
-const INITIAL_THEME = themeIdx !== -1 && args[themeIdx + 1] ? args[themeIdx + 1] : "tokyo-night";
-
-// Selectable themes: ui key + shiki theme for code highlighting
 const SELECTABLE_THEMES = [
-	{ label: "Tokyo Night", uiKey: "tokyo-night", shikiTheme: "tokyo-night" },
-	{ label: "Atom One Dark", uiKey: "one-dark", shikiTheme: "one-dark-pro" },
-	{ label: "OpenCode", uiKey: "opencode", shikiTheme: "monokai" },
+	{ label: "Tokyo Night", uiKey: "tokyo-night" },
+	{ label: "Atom One Dark", uiKey: "one-dark" },
+	{ label: "OpenCode", uiKey: "opencode" },
 ];
 
-// Active theme state (mutated on switch)
 let currentThemeIdx = Math.max(
 	0,
 	SELECTABLE_THEMES.findIndex((t) => t.uiKey === INITIAL_THEME),
 );
-let THEME_NAME = SELECTABLE_THEMES[currentThemeIdx].shikiTheme; // used by shiki
 
-// UI colors per theme
 const UI_THEMES = {
 	"tokyo-night": {
 		headerBg: "#1a1b26",
@@ -128,7 +152,7 @@ const UI_THEMES = {
 		stickyHeaderFg: "#c0caf5",
 		statusBarBg: "#24283b",
 		statusBarFg: "#a9b1d6",
-		scrollbarBg: "#3b4261",
+		scrollbarFg: "#3b4261",
 		fileNameFg: "#7aa2f7",
 		fileNameActiveFg: "#c0caf5",
 		stagedBadgeFg: "#9ece6a",
@@ -147,7 +171,7 @@ const UI_THEMES = {
 		stickyHeaderFg: "#e5c07b",
 		statusBarBg: "#21252b",
 		statusBarFg: "#abb2bf",
-		scrollbarBg: "#3e4451",
+		scrollbarFg: "#3e4451",
 		fileNameFg: "#61afef",
 		fileNameActiveFg: "#e5c07b",
 		stagedBadgeFg: "#98c379",
@@ -166,7 +190,7 @@ const UI_THEMES = {
 		stickyHeaderFg: "#fab283",
 		statusBarBg: "#1e1e1e",
 		statusBarFg: "#808080",
-		scrollbarBg: "#3c3c3c",
+		scrollbarFg: "#3c3c3c",
 		fileNameFg: "#fab283",
 		fileNameActiveFg: "#ffc09f",
 		stagedBadgeFg: "#7fd88f",
@@ -181,6 +205,104 @@ const UI_THEMES = {
 };
 
 let ui = UI_THEMES[SELECTABLE_THEMES[currentThemeIdx].uiKey];
+
+// --- Syntax highlighting styles per theme ---
+
+const SYNTAX_THEMES = {
+	"tokyo-night": {
+		default: { fg: "#a9b1d6" },
+		keyword: { fg: "#bb9af7", bold: true },
+		"keyword.return": { fg: "#bb9af7", bold: true },
+		"keyword.function": { fg: "#bb9af7", bold: true },
+		"keyword.operator": { fg: "#89ddff" },
+		string: { fg: "#9ece6a" },
+		"string.special": { fg: "#9ece6a" },
+		number: { fg: "#ff9e64" },
+		comment: { fg: "#565f89", italic: true },
+		function: { fg: "#7aa2f7" },
+		"function.call": { fg: "#7aa2f7" },
+		"function.method": { fg: "#7aa2f7" },
+		"function.builtin": { fg: "#7aa2f7" },
+		variable: { fg: "#c0caf5" },
+		"variable.builtin": { fg: "#e0af68" },
+		"variable.parameter": { fg: "#e0af68" },
+		type: { fg: "#2ac3de" },
+		"type.builtin": { fg: "#2ac3de" },
+		constant: { fg: "#ff9e64" },
+		"constant.builtin": { fg: "#ff9e64" },
+		operator: { fg: "#89ddff" },
+		punctuation: { fg: "#a9b1d6" },
+		"punctuation.bracket": { fg: "#a9b1d6" },
+		"punctuation.delimiter": { fg: "#89ddff" },
+		property: { fg: "#73daca" },
+		tag: { fg: "#f7768e" },
+		attribute: { fg: "#bb9af7" },
+	},
+	"one-dark": {
+		default: { fg: "#abb2bf" },
+		keyword: { fg: "#c678dd", bold: true },
+		"keyword.return": { fg: "#c678dd", bold: true },
+		"keyword.function": { fg: "#c678dd", bold: true },
+		"keyword.operator": { fg: "#c678dd" },
+		string: { fg: "#98c379" },
+		"string.special": { fg: "#98c379" },
+		number: { fg: "#d19a66" },
+		comment: { fg: "#5c6370", italic: true },
+		function: { fg: "#61afef" },
+		"function.call": { fg: "#61afef" },
+		"function.method": { fg: "#61afef" },
+		"function.builtin": { fg: "#61afef" },
+		variable: { fg: "#e06c75" },
+		"variable.builtin": { fg: "#e5c07b" },
+		"variable.parameter": { fg: "#e06c75" },
+		type: { fg: "#e5c07b" },
+		"type.builtin": { fg: "#e5c07b" },
+		constant: { fg: "#d19a66" },
+		"constant.builtin": { fg: "#d19a66" },
+		operator: { fg: "#56b6c2" },
+		punctuation: { fg: "#abb2bf" },
+		"punctuation.bracket": { fg: "#abb2bf" },
+		"punctuation.delimiter": { fg: "#abb2bf" },
+		property: { fg: "#e06c75" },
+		tag: { fg: "#e06c75" },
+		attribute: { fg: "#d19a66" },
+	},
+	opencode: {
+		default: { fg: "#eeeeee" },
+		keyword: { fg: "#ff6188", bold: true },
+		"keyword.return": { fg: "#ff6188", bold: true },
+		"keyword.function": { fg: "#ff6188", bold: true },
+		"keyword.operator": { fg: "#ff6188" },
+		string: { fg: "#ffd866" },
+		"string.special": { fg: "#ffd866" },
+		number: { fg: "#ab9df2" },
+		comment: { fg: "#606060", italic: true },
+		function: { fg: "#a9dc76" },
+		"function.call": { fg: "#a9dc76" },
+		"function.method": { fg: "#a9dc76" },
+		"function.builtin": { fg: "#a9dc76" },
+		variable: { fg: "#eeeeee" },
+		"variable.builtin": { fg: "#fab283" },
+		"variable.parameter": { fg: "#fab283" },
+		type: { fg: "#78dce8" },
+		"type.builtin": { fg: "#78dce8" },
+		constant: { fg: "#ab9df2" },
+		"constant.builtin": { fg: "#ab9df2" },
+		operator: { fg: "#ff6188" },
+		punctuation: { fg: "#cccccc" },
+		"punctuation.bracket": { fg: "#cccccc" },
+		"punctuation.delimiter": { fg: "#cccccc" },
+		property: { fg: "#78dce8" },
+		tag: { fg: "#ff6188" },
+		attribute: { fg: "#a9dc76" },
+	},
+};
+
+function buildSyntaxStyle(themeKey) {
+	return SyntaxStyle.fromStyles(SYNTAX_THEMES[themeKey]);
+}
+
+let currentSyntaxStyle = buildSyntaxStyle(SELECTABLE_THEMES[currentThemeIdx].uiKey);
 
 // --- Language detection ---
 
@@ -262,10 +384,7 @@ function detectLanguage(filePath) {
 	if (base === "dockerfile" || base.startsWith("dockerfile.")) return "dockerfile";
 	if (base === "makefile") return "makefile";
 	if (base === "cmakelists.txt" || ext === ".cmake") return "cmake";
-	const lang = EXT_TO_LANG[ext];
-	// Verify shiki supports it
-	if (lang && bundledLanguages[lang]) return lang;
-	return null;
+	return EXT_TO_LANG[ext] || null;
 }
 
 // --- Git helpers ---
@@ -300,7 +419,6 @@ function runDiffCmd(cmd) {
 
 function stageFile(filePath) {
 	try {
-		// Only stage if the file has unstaged changes (git diff produces output)
 		const diff = execSync(`git diff -- "${filePath}"`, { encoding: "utf-8" });
 		if (!diff.trim()) return false;
 		execSync(`git add "${filePath}"`, { encoding: "utf-8" });
@@ -327,7 +445,7 @@ function saveSession(files) {
 	try {
 		fs.writeFileSync(SLOPDIFF_PATH, JSON.stringify({ collapsed }, null, 2));
 	} catch {
-		// silently ignore write errors
+		// silently ignore
 	}
 }
 
@@ -380,163 +498,18 @@ function parseDiff(rawDiff) {
 	return files;
 }
 
-// --- Shiki highlighting ---
-
-// Font style bitmask from shiki
-const FontStyle = { Italic: 1, Bold: 2, Underline: 4 };
-
-// Convert hex color "#RRGGBB" to ANSI truecolor foreground escape
-function hexToAnsi(hex) {
-	const r = parseInt(hex.slice(1, 3), 16);
-	const g = parseInt(hex.slice(3, 5), 16);
-	const b = parseInt(hex.slice(5, 7), 16);
-	return `\x1b[38;2;${r};${g};${b}m`;
-}
-
-// Convert hex color "#RRGGBB" to ANSI truecolor background escape
-function hexToAnsiBg(hex) {
-	const r = parseInt(hex.slice(1, 3), 16);
-	const g = parseInt(hex.slice(3, 5), 16);
-	const b = parseInt(hex.slice(5, 7), 16);
-	return `\x1b[48;2;${r};${g};${b}m`;
-}
-
-const ANSI_RESET = "\x1b[0m";
-const ANSI_BOLD = "\x1b[1m";
-const ANSI_UNDERLINE = "\x1b[4m";
-
-function tokensToAnsi(tokens, bgEscape) {
-	// Outputs raw ANSI escape sequences — no blessed tags, so braces are safe
-	// bgEscape: optional raw ANSI background escape to maintain across the line
-	const bg = bgEscape || "";
-	let result = "";
-	for (const token of tokens) {
-		const text = token.content;
-		if (!token.color && !token.fontStyle) {
-			result += bg + text;
-			continue;
-		}
-
-		let open = bg;
-		if (token.fontStyle & FontStyle.Bold) open += ANSI_BOLD;
-		if (token.fontStyle & FontStyle.Underline) open += ANSI_UNDERLINE;
-		if (token.color) open += hexToAnsi(token.color);
-
-		result += open + text + ANSI_RESET;
+// Reconstruct a unified diff string for a single file from parsed hunks
+function buildFileDiff(file) {
+	let diff = `diff --git a/${file.path} b/${file.path}\n`;
+	diff += `--- a/${file.path}\n+++ b/${file.path}\n`;
+	for (const hunk of file.hunks) {
+		diff += hunk.header + "\n";
+		diff += hunk.lines.join("\n") + "\n";
 	}
-	return result;
-}
-
-// Highlight an entire hunk's code (for proper context), return token data per line
-function highlightHunk(highlighter, hunk, language) {
-	if (!language) {
-		// No highlighting — return null tokens so buildContent uses raw text
-		return hunk.lines.map((l) => ({
-			prefix: l[0] || " ",
-			tokens: null,
-			raw: l.slice(1),
-		}));
-	}
-
-	// Build the full code block from hunk lines (strip +/-/space prefix)
-	// We highlight all lines together so the parser has proper context
-	const codeLines = hunk.lines.map((l) => l.slice(1));
-	const code = codeLines.join("\n");
-
-	let tokenLines;
-	try {
-		const result = highlighter.codeToTokens(code, { lang: language, theme: THEME_NAME });
-		tokenLines = result.tokens;
-	} catch {
-		// Fallback: no highlighting
-		return hunk.lines.map((l) => ({
-			prefix: l[0] || " ",
-			tokens: null,
-			raw: l.slice(1),
-		}));
-	}
-
-	// Map token lines back to diff lines with their prefix
-	const output = [];
-	for (let i = 0; i < hunk.lines.length; i++) {
-		const prefix = hunk.lines[i][0] || " ";
-		const tokens = tokenLines[i] || [];
-		output.push({
-			prefix,
-			tokens,
-			raw: hunk.lines[i].slice(1),
-		});
-	}
-
-	return output;
+	return diff;
 }
 
 // --- TUI ---
-
-// lineToFile is rebuilt on every render: lineToFile[lineIdx] = fileIdx
-let lineToFile = [];
-
-function buildContent(files, cursorFileIdx, highlighter, filterUnstaged) {
-	const lines = [];
-	lineToFile = [];
-
-	for (let fi = 0; fi < files.length; fi++) {
-		const file = files[fi];
-		const isCursor = fi === cursorFileIdx;
-		const boldOn = isCursor ? "\x1b[1m\x1b[4m" : "";
-		const boldOff = isCursor ? ANSI_RESET : "";
-		const collapseIcon = file.collapsed ? "\u25b6" : "\u25bc";
-		const stagedTag = file.staged ? ` ${hexToAnsi(ui.stagedBadgeFg)}[STAGED]${ANSI_RESET}` : "";
-		const viewedTag = file.viewed ? ` ${hexToAnsi(ui.viewedBadgeFg)}[viewed]${ANSI_RESET}` : "";
-		const langTag = file.language ? ` ${hexToAnsi(ui.langBadgeFg)}(${file.language})${ANSI_RESET}` : "";
-
-		const nameFg = isCursor ? ui.fileNameActiveFg : ui.fileNameFg;
-		lines.push(`${boldOn}${hexToAnsi(nameFg)}${collapseIcon} ${file.path}${ANSI_RESET}${boldOff}${langTag}${stagedTag}${viewedTag}`);
-		lineToFile.push(fi);
-
-		if (!file.collapsed) {
-			for (const hunk of file.hunks) {
-				lines.push(`  ${hexToAnsi(ui.hunkHeaderFg)}${hunk.header}${ANSI_RESET}`);
-				lineToFile.push(fi);
-
-				const highlighted = highlightHunk(highlighter, hunk, file.language);
-				for (const { prefix: p, tokens, raw } of highlighted) {
-					if (p === "+") {
-						const ct = tokens ? tokensToAnsi(tokens) : raw;
-						lines.push(`  \x1b[42;30m+\x1b[0m ${ct}`);
-					} else if (p === "-") {
-						const ct = tokens ? tokensToAnsi(tokens) : raw;
-						lines.push(`  \x1b[41;30m-\x1b[0m ${ct}`);
-					} else {
-						const ct = tokens ? tokensToAnsi(tokens) : raw;
-						lines.push(`  ${ct}`);
-					}
-					lineToFile.push(fi);
-				}
-			}
-			lines.push(""); // spacer
-			lineToFile.push(fi);
-		}
-	}
-
-	return lines.join("\n");
-}
-
-function getFileLineOffset(files, fileIdx) {
-	let offset = 0;
-	for (let i = 0; i < fileIdx; i++) {
-		offset += 1;
-		if (!files[i].collapsed) {
-			for (const hunk of files[i].hunks) {
-				offset += 1 + hunk.lines.length;
-			}
-			offset += 1;
-		}
-	}
-	return offset;
-}
-
-// --- Main ---
 
 async function main() {
 	const rawDiff = INITIAL_CMD ? runDiffCmd(INITIAL_CMD) : getGitDiff();
@@ -548,172 +521,461 @@ async function main() {
 		process.exit(0);
 	}
 
-	// Collect unique languages from the diff
-	const langs = [...new Set(files.map((f) => f.language).filter(Boolean))];
+	// Initialize Tree-sitter for syntax highlighting
+	const tsClient = getTreeSitterClient();
+	await tsClient.initialize();
 
-	// Initialize shiki highlighter with all selectable shiki themes
-	const highlighter = await createHighlighter({
-		themes: SELECTABLE_THEMES.map((t) => t.shikiTheme),
-		langs: langs.length > 0 ? langs : ["text"],
-	});
+	const renderer = await createCliRenderer({ exitOnCtrlC: true });
 
 	let cursorFileIdx = 0;
 	let filterUnstaged = false;
 	let customDiffCmd = INITIAL_CMD ?? null;
 
-	const screen = blessed.screen({
-		smartCSR: true,
-		title: "slopdiff",
-		fullUnicode: true,
-	});
+	// --- Layout ---
+	// Root: column layout, full screen
+	const root = renderer.root;
 
-	const header = blessed.box({
-		top: 0,
-		left: 0,
+	// Header bar
+	const headerBox = new BoxRenderable(renderer, {
+		id: "header-box",
+		width: "100%",
+		height: 1,
+		backgroundColor: ui.headerBg,
+		justifyContent: "center",
+		alignItems: "center",
+	});
+	const header = new TextRenderable(renderer, {
+		id: "header",
+		height: 1,
+		content: "slopdiff  j/k: navigate | enter/c: collapse | C/E: all | s: stage | f: filter | e: command | t: theme | r: refresh | q: quit",
+		fg: ui.headerFg,
+	});
+	headerBox.add(header);
+
+	// Sticky header (current file indicator)
+	const stickyHeaderBox = new BoxRenderable(renderer, {
+		id: "sticky-header-box",
 		width: "100%",
 		height: 3,
-		content: `{center}{bold}slopdiff{/bold} {${ui.fg}-fg}j/k: navigate | enter/c: collapse | C/E: all | s: stage | f: filter | e: command | t: theme | r: refresh | q: quit{/${ui.fg}-fg}{/center}`,
-		tags: true,
-		style: { fg: ui.headerFg, bg: ui.headerBg },
+		backgroundColor: ui.stickyHeaderBg,
+		borderStyle: "single",
+		borderColor: ui.stickyHeaderFg,
+		marginTop: 0,
+		marginBottom: 0,
+		paddingLeft: 1,
 	});
-
-	const stickyHeader = blessed.box({
-		top: 3,
-		left: 0,
+	const stickyHeader = new TextRenderable(renderer, {
+		id: "sticky-header",
 		width: "100%",
-		height: 1,
-		tags: false,
-		style: { fg: ui.stickyHeaderFg, bg: ui.stickyHeaderBg },
+		content: "",
+		fg: ui.stickyHeaderFg,
 	});
+	stickyHeaderBox.add(stickyHeader);
 
-	const diffBox = blessed.box({
-		top: 4,
-		left: 0,
+	// Main diff scroll area
+	const scrollBox = new ScrollBoxRenderable(renderer, {
+		id: "diff-scroll",
 		width: "100%",
-		height: "100%-5",
-		scrollable: true,
-		alwaysScroll: true,
-		scrollbar: {
-			style: { bg: ui.scrollbarBg },
+		flexGrow: 1,
+		viewportCulling: true,
+		viewportOptions: { backgroundColor: ui.bg },
+		contentOptions: { backgroundColor: ui.bg },
+		scrollbarOptions: {
+			trackOptions: { foregroundColor: ui.scrollbarFg },
 		},
-		keys: true,
-		vi: true,
-		mouse: true,
-		tags: false,
-		style: { fg: ui.fg, bg: ui.bg },
-		padding: { left: 1 },
 	});
 
-	const statusBar = blessed.box({
-		bottom: 0,
-		left: 0,
+	// Status bar (1 row at bottom)
+	const statusBarBox = new BoxRenderable(renderer, {
+		id: "status-bar-box",
 		width: "100%",
 		height: 1,
-		tags: true,
-		style: { fg: ui.statusBarFg, bg: ui.statusBarBg },
+		backgroundColor: ui.statusBarBg,
 	});
+	const statusBar = new TextRenderable(renderer, {
+		id: "status-bar",
+		width: "100%",
+		height: 1,
+		content: "",
+		fg: ui.statusBarFg,
+	});
+	statusBarBox.add(statusBar);
 
-	screen.append(header);
-	screen.append(stickyHeader);
-	screen.append(diffBox);
-	screen.append(statusBar);
+	root.add(headerBox);
+	root.add(stickyHeaderBox);
+	root.add(scrollBox);
+	root.add(statusBarBox);
 
 	// --- Theme selector overlay ---
-
-	const themeList = blessed.list({
-		top: "center",
-		left: "center",
-		width: 36,
-		height: SELECTABLE_THEMES.length + 4,
-		border: { type: "line" },
-		label: " Select Theme ",
-		tags: true,
-		keys: true,
-		vi: true,
-		hidden: true,
-		style: {
-			border: { fg: "#fab283" },
-			label: { fg: "#fab283" },
-			fg: "#eeeeee",
-			bg: "#1e1e1e",
-			selected: { fg: "#0a0a0a", bg: "#fab283" },
-		},
-		items: SELECTABLE_THEMES.map((t) => `  ${t.label}`),
+	const themeOverlay = new BoxRenderable(renderer, {
+		id: "theme-overlay",
+		position: "absolute",
+		width: "100%",
+		height: "100%",
+		justifyContent: "center",
+		alignItems: "center",
 	});
-	screen.append(themeList);
+	const themeSelect = new SelectRenderable(renderer, {
+		id: "theme-select",
+		width: 36,
+		height: SELECTABLE_THEMES.length + 2,
+		options: SELECTABLE_THEMES.map((t) => ({
+			name: t.label,
+			description: "",
+		})),
+		backgroundColor: "#1e1e1e",
+		selectedBackgroundColor: "#fab283",
+		selectedTextColor: "#0a0a0a",
+		textColor: "#eeeeee",
+		showDescription: false,
+	});
+	themeOverlay.add(themeSelect);
+	themeOverlay.visible = false;
+
+	// --- Command input overlay ---
+	const cmdOverlay = new BoxRenderable(renderer, {
+		id: "cmd-overlay",
+		position: "absolute",
+		width: "100%",
+		height: "100%",
+		justifyContent: "center",
+		alignItems: "center",
+	});
+	const cmdInput = new InputRenderable(renderer, {
+		id: "cmd-input",
+		width: "60%",
+		height: 1,
+		placeholder: "git diff master",
+		backgroundColor: ui.statusBarBg,
+		fg: ui.fg,
+	});
+	cmdOverlay.add(cmdInput);
+	cmdOverlay.visible = false;
+
+	root.add(themeOverlay);
+	root.add(cmdOverlay);
+
+	// --- Diff renderables ---
+	// We store references to file header texts and diff renderables
+	let fileHeaders = [];
+	let diffRenderables = [];
+
+	function rebuildDiffContent() {
+		// Clear scroll box children
+		for (const child of scrollBox.getChildren()) {
+			scrollBox.remove(child.id);
+		}
+		fileHeaders = [];
+		diffRenderables = [];
+
+		for (let fi = 0; fi < files.length; fi++) {
+			const file = files[fi];
+			const isCursor = fi === cursorFileIdx;
+			const collapseIcon = file.collapsed ? "\u25b6" : "\u25bc";
+			const stagedTag = file.staged ? " [STAGED]" : "";
+			const viewedTag = file.viewed ? " [viewed]" : "";
+			const langTag = file.language ? ` (${file.language})` : "";
+
+			const headerText = new TextRenderable(renderer, {
+				id: `file-header-${fi}`,
+				width: "100%",
+				height: 1,
+				content: `${collapseIcon} ${file.path}${langTag}${stagedTag}${viewedTag}`,
+				fg: isCursor ? ui.fileNameActiveFg : ui.fileNameFg,
+				bg: ui.bg,
+				attributes: isCursor ? TextAttributes.BOLD : 0,
+			});
+			fileHeaders.push(headerText);
+			scrollBox.add(headerText);
+
+			if (!file.collapsed && file.hunks.length > 0) {
+				const diffStr = buildFileDiff(file);
+				const diffWidget = new DiffRenderable(renderer, {
+					id: `diff-${fi}`,
+					width: "100%",
+					diff: diffStr,
+					view: "unified",
+					filetype: file.language || undefined,
+					syntaxStyle: currentSyntaxStyle,
+					treeSitterClient: tsClient,
+					showLineNumbers: true,
+					addedBg: ui.addedBg,
+					removedBg: ui.removedBg,
+					contextBg: ui.bg,
+					lineNumberFg: ui.langBadgeFg,
+					fg: ui.fg,
+				});
+				diffRenderables.push(diffWidget);
+				scrollBox.add(diffWidget);
+			} else {
+				diffRenderables.push(null);
+			}
+		}
+	}
+
+	function getVisibleFileIdx() {
+		const scrollTop = scrollBox.scrollTop;
+		let cumulative = 0;
+		for (let i = 0; i < fileHeaders.length; i++) {
+			const headerHeight = fileHeaders[i]?.height ?? 1;
+			const diffHeight = diffRenderables[i]?.height ?? 0;
+			const sectionHeight = headerHeight + diffHeight;
+			if (scrollTop < cumulative + sectionHeight) return i;
+			cumulative += sectionHeight;
+		}
+		return fileHeaders.length - 1;
+	}
+
+	function renderScroll() {
+		if (files.length === 0) return;
+		cursorFileIdx = getVisibleFileIdx();
+		updateStickyHeader();
+		updateStatusBar();
+	}
+
+	function updateStickyHeader() {
+		const file = files[cursorFileIdx];
+		if (!file) {
+			stickyHeader.content = " [No files]";
+			return;
+		}
+		const collapseIcon = file.collapsed ? "\u25b6" : "\u25bc";
+		const langPart = file.language ? ` (${file.language})` : "";
+		const stagedPart = file.staged ? " [STAGED]" : "";
+		stickyHeader.content = ` ${collapseIcon} ${file.path}${langPart}${stagedPart}  ${cursorFileIdx + 1}/${files.length}`;
+	}
+
+	function updateStatusBar() {
+		const staged = files.filter((f) => f.staged).length;
+		const themeName = SELECTABLE_THEMES[currentThemeIdx].label;
+		if (files.length === 0) {
+			statusBar.content = ` No files | theme: ${themeName}${filterUnstaged ? "  [working tree]" : ""}  v${VERSION}`;
+		} else {
+			statusBar.content = ` File ${cursorFileIdx + 1}/${files.length} | ${staged} staged | ${files[cursorFileIdx].path} | theme: ${themeName}${filterUnstaged ? "  [working tree]" : ""}  v${VERSION}`;
+		}
+	}
+
+	function render() {
+		rebuildDiffContent();
+		updateStickyHeader();
+		updateStatusBar();
+	}
+
+	function scrollToFile(idx) {
+		const headerNode = fileHeaders[idx];
+		if (headerNode) {
+			scrollBox.scrollChildIntoView(headerNode.id);
+		}
+	}
 
 	function applyTheme(idx) {
 		currentThemeIdx = idx;
-		THEME_NAME = SELECTABLE_THEMES[idx].shikiTheme;
 		ui = UI_THEMES[SELECTABLE_THEMES[idx].uiKey];
-		// Update widget styles to new theme colors
-		header.style.fg = ui.headerFg;
-		header.style.bg = ui.headerBg;
-		stickyHeader.style.fg = ui.stickyHeaderFg;
-		stickyHeader.style.bg = ui.stickyHeaderBg;
-		diffBox.style.fg = ui.fg;
-		diffBox.style.bg = ui.bg;
-		statusBar.style.fg = ui.statusBarFg;
-		statusBar.style.bg = ui.statusBarBg;
+		currentSyntaxStyle = buildSyntaxStyle(SELECTABLE_THEMES[idx].uiKey);
+		headerBox.backgroundColor = ui.headerBg;
+		header.fg = ui.headerFg;
+		stickyHeaderBox.backgroundColor = ui.stickyHeaderBg;
+		stickyHeaderBox.borderColor = ui.stickyHeaderFg;
+		stickyHeader.fg = ui.stickyHeaderFg;
+		statusBarBox.backgroundColor = ui.statusBarBg;
+		statusBar.fg = ui.statusBarFg;
+		scrollBox.viewportOptions = { backgroundColor: ui.bg };
+		scrollBox.contentOptions = { backgroundColor: ui.bg };
+		render();
 	}
 
-	screen.key(["t"], () => {
-		themeList.select(currentThemeIdx);
-		themeList.show();
-		themeList.focus();
-		screen.render();
+	// --- State: which overlay is active ---
+	let activeOverlay = null; // "theme" | "cmd" | null
+
+	// --- Keyboard input ---
+	renderer.keyInput.on("keypress", (key) => {
+		// If theme selector is visible
+		if (activeOverlay === "theme") {
+			if (key.name === "escape" || key.name === "q") {
+				themeOverlay.visible = false;
+				activeOverlay = null;
+				return;
+			}
+			// Let SelectRenderable handle j/k/enter internally
+			return;
+		}
+
+		// If command input is visible
+		if (activeOverlay === "cmd") {
+			if (key.name === "escape") {
+				cmdOverlay.visible = false;
+				activeOverlay = null;
+				return;
+			}
+			// Let InputRenderable handle typing internally
+			return;
+		}
+
+		// Main keybindings
+		switch (key.name) {
+			case "q":
+				renderer.destroy();
+				process.exit(0);
+				break;
+
+			case "j":
+				files[cursorFileIdx].viewed = true;
+				cursorFileIdx = (cursorFileIdx + 1) % files.length;
+				render();
+				scrollToFile(cursorFileIdx);
+				break;
+
+			case "k":
+				cursorFileIdx = (cursorFileIdx - 1 + files.length) % files.length;
+				render();
+				scrollToFile(cursorFileIdx);
+				break;
+
+			case "C":
+			case "c":
+				if (key.shift) {
+					// Shift+C: collapse all
+					for (const file of files) file.collapsed = true;
+					saveSession(files);
+					render();
+					scrollToFile(cursorFileIdx);
+				} else {
+					// c: toggle collapse current
+					if (files.length > 0) {
+						files[cursorFileIdx].collapsed = !files[cursorFileIdx].collapsed;
+						if (files[cursorFileIdx].collapsed) {
+							files[cursorFileIdx].viewed = true;
+						}
+						saveSession(files);
+						render();
+						scrollToFile(cursorFileIdx);
+					}
+				}
+				break;
+
+			case "return":
+				if (files.length > 0) {
+					files[cursorFileIdx].collapsed = !files[cursorFileIdx].collapsed;
+					if (files[cursorFileIdx].collapsed) {
+						files[cursorFileIdx].viewed = true;
+					}
+					saveSession(files);
+					render();
+					scrollToFile(cursorFileIdx);
+				}
+				break;
+
+			case "E":
+			case "e":
+				if (key.shift) {
+					// Shift+E: expand all
+					for (const file of files) file.collapsed = false;
+					saveSession(files);
+					render();
+					scrollToFile(cursorFileIdx);
+				} else {
+					// e: custom diff command input
+					cmdOverlay.visible = true;
+					cmdInput.value = customDiffCmd || "git diff master";
+					cmdInput.focus();
+					activeOverlay = "cmd";
+				}
+				break;
+
+			case "s":
+				if (files.length > 0) {
+					const file = files[cursorFileIdx];
+					if (!file.staged) {
+						const ok = stageFile(file.path);
+						if (ok) {
+							file.staged = true;
+							render();
+						}
+					}
+				}
+				break;
+
+			case "f":
+				filterUnstaged = !filterUnstaged;
+				{
+					const rawDiff = filterUnstaged ? getWorkingDiff() : getGitDiff();
+					const refreshed = parseDiff(rawDiff);
+					applySession(refreshed);
+					files.length = 0;
+					files.push(...refreshed);
+					cursorFileIdx = 0;
+					render();
+				}
+				break;
+
+			case "r":
+				{
+					const rawDiff = customDiffCmd
+						? runDiffCmd(customDiffCmd)
+						: filterUnstaged
+							? getWorkingDiff()
+							: getGitDiff();
+					const refreshed = parseDiff(rawDiff);
+					applySession(refreshed);
+					files.length = 0;
+					files.push(...refreshed);
+					cursorFileIdx = Math.min(cursorFileIdx, Math.max(0, files.length - 1));
+					render();
+				}
+				break;
+
+			case "t":
+				themeOverlay.visible = true;
+				themeSelect.focus();
+				activeOverlay = "theme";
+				break;
+
+			case "down":
+				scrollBox.scrollBy(1);
+				renderScroll();
+				break;
+
+			case "up":
+				scrollBox.scrollBy(-1);
+				renderScroll();
+				break;
+
+			case "pagedown":
+			case "space":
+				scrollBox.scrollBy(1, "viewport");
+				renderScroll();
+				break;
+
+			case "pageup":
+				scrollBox.scrollBy(-1, "viewport");
+				renderScroll();
+				break;
+
+			default:
+				// Ctrl+D / Ctrl+U for half-page
+				if (key.ctrl && key.name === "d") {
+					scrollBox.scrollBy(10);
+					renderScroll();
+				} else if (key.ctrl && key.name === "u") {
+					scrollBox.scrollBy(-10);
+					renderScroll();
+				}
+				break;
+		}
 	});
 
-	themeList.key(["escape", "q"], () => {
-		themeList.hide();
-		diffBox.focus();
-		screen.render();
+	// Theme select events
+	themeSelect.on(SelectRenderableEvents.ITEM_SELECTED, (index) => {
+		themeOverlay.visible = false;
+		activeOverlay = null;
+		applyTheme(index);
 	});
 
-	themeList.on("select", (_, idx) => {
-		applyTheme(idx);
-		themeList.hide();
-		diffBox.focus();
-		render();
-	});
-
-	// --- Custom diff command input ---
-
-	const cmdInput = blessed.textbox({
-		top: "center",
-		left: "center",
-		width: "60%",
-		height: 3,
-		border: { type: "line" },
-		label: " Diff command ",
-		tags: true,
-		inputOnFocus: true,
-		style: {
-			border: { fg: ui.fileNameFg },
-			label: { fg: ui.fileNameFg },
-			fg: ui.fg,
-			bg: ui.statusBarBg,
-		},
-		hidden: true,
-	});
-	screen.append(cmdInput);
-
-	screen.key(["e"], () => {
-		cmdInput.setValue(customDiffCmd || "git diff master");
-		cmdInput.show();
-		cmdInput.focus();
-		screen.render();
-	});
-
-	cmdInput.key(["escape"], () => {
-		cmdInput.hide();
-		diffBox.focus();
-		screen.render();
-	});
-
-	cmdInput.on("submit", (value) => {
-		cmdInput.hide();
-		diffBox.focus();
+	// Command input submit (enter)
+	cmdInput.on(InputRenderableEvents.ENTER, () => {
+		const value = cmdInput.value;
+		cmdOverlay.visible = false;
+		activeOverlay = null;
 		const cmd = value.trim();
 		if (!cmd) return;
 		customDiffCmd = cmd;
@@ -727,215 +989,24 @@ async function main() {
 		render();
 	});
 
-	function updateStickyHeader() {
-		const file = files[cursorFileIdx];
-		if (!file) {
-			stickyHeader.setContent(` ${hexToAnsi(ui.viewedBadgeFg)}[No files]${ANSI_RESET}`);
-			return;
-		}
-		const collapseIcon = file.collapsed ? "\u25b6" : "\u25bc";
-		const langPart = file.language ? ` ${hexToAnsi(ui.langBadgeFg)}(${file.language})${ANSI_RESET}` : "";
-		const stagedPart = file.staged ? ` ${hexToAnsi(ui.stagedBadgeFg)}[STAGED]${ANSI_RESET}` : "";
-		stickyHeader.setContent(
-			` \x1b[1m${hexToAnsi(ui.fileNameActiveFg)}${collapseIcon} ${file.path}${ANSI_RESET}${langPart}${stagedPart}  ${hexToAnsi(ui.viewedBadgeFg)}${cursorFileIdx + 1}/${files.length}${ANSI_RESET}`,
-		);
-	}
-
-	function getVisibleFileIdx() {
-		const scrollPos = diffBox.childBase;
-		return lineToFile[scrollPos] ?? lineToFile[lineToFile.length - 1] ?? 0;
-	}
-
-	function render() {
-		diffBox.setContent(buildContent(files, cursorFileIdx, highlighter, filterUnstaged));
-		const staged = files.filter((f) => f.staged).length;
-		const themeName = SELECTABLE_THEMES[currentThemeIdx].label;
-		if (files.length === 0) {
-			statusBar.setContent(` No files | theme: ${themeName}${filterUnstaged ? "  [working tree]" : ""}{right}v${VERSION} `);
-		} else {
-			statusBar.setContent(
-				` File ${cursorFileIdx + 1}/${files.length} | ${staged} staged | ${files[cursorFileIdx].path} | theme: ${themeName}${filterUnstaged ? "  [working tree]" : ""}{right}v${VERSION} `,
-			);
-		}
-		updateStickyHeader();
-		screen.render();
-	}
-
-	function scrollToFile(idx) {
-		const offset = getFileLineOffset(files, idx);
-		diffBox.setScrollPerc(0);
-		diffBox.scroll(offset);
-	}
-
-	// Key bindings
-	screen.key(["q", "C-c"], () => process.exit(0));
-
-	screen.key(["r"], () => {
-		const rawDiff = customDiffCmd ? runDiffCmd(customDiffCmd) : filterUnstaged ? getWorkingDiff() : getGitDiff();
-		const refreshed = parseDiff(rawDiff);
-		applySession(refreshed);
-		files.length = 0;
-		files.push(...refreshed);
-		cursorFileIdx = Math.min(cursorFileIdx, Math.max(0, files.length - 1));
-		render();
-	});
-
-	screen.key(["f"], () => {
-		filterUnstaged = !filterUnstaged;
-		const rawDiff = filterUnstaged ? getWorkingDiff() : getGitDiff();
-		const refreshed = parseDiff(rawDiff);
-		applySession(refreshed);
-		files.length = 0;
-		files.push(...refreshed);
-		cursorFileIdx = 0;
-		render();
-	});
-
-	screen.key(["j"], () => {
-		if (cursorFileIdx < files.length - 1) {
-			files[cursorFileIdx].viewed = true;
-			cursorFileIdx++;
-			scrollToFile(cursorFileIdx);
-			render();
-		}
-	});
-
-	screen.key(["k"], () => {
-		if (cursorFileIdx > 0) {
-			cursorFileIdx--;
-			scrollToFile(cursorFileIdx);
-			render();
-		}
-	});
-
-	function renderScroll() {
-		if (files.length === 0) return;
-		cursorFileIdx = getVisibleFileIdx();
-		const staged = files.filter((f) => f.staged).length;
-		const themeName = SELECTABLE_THEMES[currentThemeIdx].label;
-		statusBar.setContent(
-			` File ${cursorFileIdx + 1}/${files.length} | ${staged} staged | ${files[cursorFileIdx].path} | theme: ${themeName}${filterUnstaged ? "  [working tree]" : ""}{right}v${VERSION} `,
-		);
-		updateStickyHeader();
-		screen.render();
-	}
-
-	screen.key(["down"], () => {
-		diffBox.scroll(1);
-		renderScroll();
-	});
-	screen.key(["up"], () => {
-		diffBox.scroll(-1);
-		renderScroll();
-	});
-
-	screen.key(["enter", "c"], () => {
-		files[cursorFileIdx].collapsed = !files[cursorFileIdx].collapsed;
-		if (files[cursorFileIdx].collapsed) {
-			files[cursorFileIdx].viewed = true;
-		}
-		saveSession(files);
-		scrollToFile(cursorFileIdx);
-		render();
-	});
-
-	screen.key(["S-c"], () => {
-		for (const file of files) file.collapsed = true;
-		saveSession(files);
-		scrollToFile(cursorFileIdx);
-		render();
-	});
-
-	screen.key(["S-e"], () => {
-		for (const file of files) file.collapsed = false;
-		saveSession(files);
-		scrollToFile(cursorFileIdx);
-		render();
-	});
-
-	screen.key(["s"], () => {
-		const file = files[cursorFileIdx];
-		if (!file.staged) {
-			const ok = stageFile(file.path);
-			if (ok) {
-				file.staged = true;
-				render();
-			}
-		}
-	});
-
-	screen.key(["C-d"], () => {
-		diffBox.scroll(Math.floor(diffBox.height / 2));
-		renderScroll();
-	});
-	screen.key(["C-u"], () => {
-		diffBox.scroll(-Math.floor(diffBox.height / 2));
-		renderScroll();
-	});
-	screen.key(["pagedown", "space"], () => {
-		diffBox.scroll(diffBox.height - 2);
-		renderScroll();
-	});
-	screen.key(["pageup"], () => {
-		diffBox.scroll(-(diffBox.height - 2));
-		renderScroll();
-	});
-
-	// --- Neoscroll-style smooth animated scrolling (Shift+Up / Shift+Down) ---
-
-	let scrollAnimation = null;
-
-	// Easing function: sine ease-in-out
-	function easeInOutSine(t) {
-		return -(Math.cos(Math.PI * t) - 1) / 2;
-	}
-
-	function smoothScroll(totalLines, duration) {
-		// Cancel any existing animation
-		if (scrollAnimation) {
-			clearInterval(scrollAnimation.timer);
-			scrollAnimation = null;
-		}
-
-		const startTime = Date.now();
-		let scrolled = 0;
-
-		scrollAnimation = {
-			timer: setInterval(() => {
-				const elapsed = Date.now() - startTime;
-				const progress = Math.min(elapsed / duration, 1);
-				const easedProgress = easeInOutSine(progress);
-				const targetScrolled = Math.round(easedProgress * totalLines);
-				const delta = targetScrolled - scrolled;
-
-				if (delta !== 0) {
-					diffBox.scroll(delta);
-					scrolled = targetScrolled;
-					renderScroll();
-				}
-
-				if (progress >= 1) {
-					clearInterval(scrollAnimation.timer);
-					scrollAnimation = null;
-				}
-			}, 16), // ~60fps
-		};
-	}
-
-	// Shift+Down: smooth scroll down half page
-	screen.key(["S-down"], () => {
-		smoothScroll(Math.floor(diffBox.height / 2), 150);
-	});
-
-	// Shift+Up: smooth scroll up half page
-	screen.key(["S-up"], () => {
-		smoothScroll(-Math.floor(diffBox.height / 2), 150);
-	});
-
+	// Initial render
 	render();
-	diffBox.focus();
+	scrollBox.focus();
 }
 
 function startTUI() {
 	main();
+}
+
+// --- Dispatch ---
+
+if (args[0] === "update") {
+	runUpdate()
+		.then(() => process.exit(0))
+		.catch((e) => {
+			console.error(`  \u2717 ${e.message}`);
+			process.exit(1);
+		});
+} else {
+	startTUI();
 }
