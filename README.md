@@ -1,5 +1,7 @@
 # slopdiff
 
+![slopdiff demo](https://dfn06qzp9zed9.cloudfront.net/slopdiff/demo.gif)
+
 A fast, keyboard-driven terminal diff viewer with syntax highlighting, file staging, and session persistence.
 
 ```
