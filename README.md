@@ -1,6 +1,6 @@
 # slopdiff
 
-![slopdiff demo](https://dfn06qzp9zed9.cloudfront.net/slopdiff/demo.gif)
+![slopdiff demo](https://dfn06qzp9zed9.cloudfront.net/slopdiff/demo-lowres.gif)
 
 A fast, keyboard-driven terminal diff viewer with syntax highlighting, file staging, and session persistence.
 
@@ -38,12 +38,12 @@ Installs to `~/.slopdiff/bin/slopdiff` and adds it to your PATH.
 
 Download the binary for your platform from `https://sameidusmani.com/slopdiff/v{version}/` and put it somewhere on your PATH:
 
-| Platform | Binary |
-|---|---|
+| Platform              | Binary                 |
+| --------------------- | ---------------------- |
 | macOS (Apple Silicon) | `slopdiff-macos-arm64` |
-| macOS (Intel) | `slopdiff-macos-x64` |
-| Linux x64 | `slopdiff-linux-x64` |
-| Linux arm64 | `slopdiff-linux-arm64` |
+| macOS (Intel)         | `slopdiff-macos-x64`   |
+| Linux x64             | `slopdiff-linux-x64`   |
+| Linux arm64           | `slopdiff-linux-arm64` |
 
 ### From source
 
@@ -84,22 +84,22 @@ slopdiff --version
 
 ## Keybindings
 
-| Key | Action |
-|---|---|
-| `j` / `k` | Next / previous file |
-| `↑` / `↓` | Scroll one line |
-| `Shift+↑` / `Shift+↓` | Smooth scroll half page |
-| `Ctrl+D` / `Ctrl+U` | Scroll half page |
-| `Space` / `PgDn` / `PgUp` | Scroll full page |
-| `enter` / `c` | Collapse / expand current file |
-| `C` | Collapse all files |
-| `E` | Expand all files |
-| `s` | Stage current file (`git add`) |
-| `f` | Toggle working tree filter |
-| `e` | Enter a custom diff command |
-| `t` | Open theme selector |
-| `r` | Refresh diff |
-| `q` / `Ctrl+C` | Quit |
+| Key                       | Action                         |
+| ------------------------- | ------------------------------ |
+| `j` / `k`                 | Next / previous file           |
+| `↑` / `↓`                 | Scroll one line                |
+| `Shift+↑` / `Shift+↓`     | Smooth scroll half page        |
+| `Ctrl+D` / `Ctrl+U`       | Scroll half page               |
+| `Space` / `PgDn` / `PgUp` | Scroll full page               |
+| `enter` / `c`             | Collapse / expand current file |
+| `C`                       | Collapse all files             |
+| `E`                       | Expand all files               |
+| `s`                       | Stage current file (`git add`) |
+| `f`                       | Toggle working tree filter     |
+| `e`                       | Enter a custom diff command    |
+| `t`                       | Open theme selector            |
+| `r`                       | Refresh diff                   |
+| `q` / `Ctrl+C`            | Quit                           |
 
 ---
 
@@ -107,11 +107,11 @@ slopdiff --version
 
 Switch themes at runtime with `t` or set a default with `--theme`:
 
-| Key | Theme |
-|---|---|
+| Key           | Theme                 |
+| ------------- | --------------------- |
 | `tokyo-night` | Tokyo Night (default) |
-| `one-dark` | Atom One Dark |
-| `opencode` | OpenCode |
+| `one-dark`    | Atom One Dark         |
+| `opencode`    | OpenCode              |
 
 ---
 
@@ -131,6 +131,7 @@ npm run build
 ```
 
 This will:
+
 1. Inject the version into `index.js`
 2. Generate `install.sh` with the versioned download URL
 3. Compile binaries for all platforms into `dist/v{version}/`
