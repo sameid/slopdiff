@@ -24,7 +24,7 @@ set -e
 
 # ─────────────────────────────────────────────
 #  slopdiff installer v${version}
-#  curl -fsSL https://sameidusmani.com/slopdiff/install.sh | sh
+#  curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 # ─────────────────────────────────────────────
 
 CYAN='\\033[0;36m'
@@ -36,7 +36,7 @@ RESET='\\033[0m'
 
 INSTALL_DIR="$HOME/.slopdiff"
 BIN_DIR="$INSTALL_DIR/bin"
-BASE_URL="https://sameidusmani.com/slopdiff/v${version}"
+BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v${version}"
 
 echo ""
 echo -e "\${BOLD}\${CYAN}  ◉ slopdiff installer v${version}\${RESET}"
@@ -124,7 +124,7 @@ console.log(`  ✓ Generated install.sh (v${version})`);
 
 // --- Compile binaries ---
 
-const outDir = `dist/v${version}`;
+const outDir = `dist/bin/v${version}`;
 mkdirSync(outDir, { recursive: true });
 
 const targets = [

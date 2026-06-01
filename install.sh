@@ -3,7 +3,7 @@ set -e
 
 # ─────────────────────────────────────────────
 #  slopdiff installer v0.1.0
-#  curl -fsSL https://sameidusmani.com/slopdiff/install.sh | sh
+#  curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 # ─────────────────────────────────────────────
 
 CYAN='\033[0;36m'
@@ -15,7 +15,7 @@ RESET='\033[0m'
 
 INSTALL_DIR="$HOME/.slopdiff"
 BIN_DIR="$INSTALL_DIR/bin"
-BASE_URL="https://sameidusmani.com/slopdiff/v0.1.0"
+BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v0.1.0"
 
 echo ""
 echo -e "${BOLD}${CYAN}  ◉ slopdiff installer v0.1.0${RESET}"

@@ -4,8 +4,8 @@
 
 A fast, keyboard-driven terminal diff viewer with syntax highlighting, file staging, and session persistence.
 
-```
-curl -fsSL https://sameidusmani.com/slopdiff/install.sh | sh
+```bash
+curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 ```
 
 ---
@@ -29,14 +29,14 @@ curl -fsSL https://sameidusmani.com/slopdiff/install.sh | sh
 ### One-liner
 
 ```bash
-curl -fsSL https://sameidusmani.com/slopdiff/install.sh | sh
+curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 ```
 
 Installs to `~/.slopdiff/bin/slopdiff` and adds it to your PATH.
 
 ### Manual
 
-Download the binary for your platform from `https://sameidusmani.com/slopdiff/v{version}/` and put it somewhere on your PATH:
+Download the binary for your platform from `https://cdn.sameidusmani.com/slopdiff/bin/v{version}/` and put it somewhere on your PATH:
 
 | Platform              | Binary                 |
 | --------------------- | ---------------------- |
