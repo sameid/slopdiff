@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { execSync } from "child_process";
@@ -164,7 +164,6 @@ PROFILES=(
 
 for PROFILE in "\${PROFILES[@]}"; do
   if [ -f "$PROFILE" ] && grep -q ".slopdiff/bin" "$PROFILE" 2>/dev/null; then
-    # Remove the comment line and the export/set line
     if [[ "$PROFILE" == *fish* ]]; then
       sed -i.bak '/# slopdiff/d; /slopdiff\\/bin/d' "$PROFILE" && rm -f "$PROFILE.bak"
     else
@@ -184,97 +183,32 @@ echo ""
 writeFileSync("uninstall.sh", uninstallScript, { mode: 0o755 });
 console.log(`  ✓ Generated uninstall.sh`);
 
-// --- Patch blessed/lib/widget.js dynamic require ---
-// esbuild cannot statically analyze `require('./widgets/' + file)`.
-// We replace it with explicit static requires so esbuild bundles them all.
-
-const widgetPath = "node_modules/blessed/lib/widget.js";
-const widgetSrc = readFileSync(widgetPath, "utf-8");
-const staticRequires = `
-widget['Node']          = widget['node']          = require('./widgets/node');
-widget['Screen']        = widget['screen']        = require('./widgets/screen');
-widget['Element']       = widget['element']       = require('./widgets/element');
-widget['Box']           = widget['box']           = require('./widgets/box');
-widget['Text']          = widget['text']          = require('./widgets/text');
-widget['Line']          = widget['line']          = require('./widgets/line');
-widget['ScrollableBox'] = widget['scrollablebox'] = require('./widgets/scrollablebox');
-widget['ScrollableText']= widget['scrollabletext']= require('./widgets/scrollabletext');
-widget['BigText']       = widget['bigtext']       = require('./widgets/bigtext');
-widget['List']          = widget['list']          = require('./widgets/list');
-widget['Form']          = widget['form']          = require('./widgets/form');
-widget['Input']         = widget['input']         = require('./widgets/input');
-widget['Textarea']      = widget['textarea']      = require('./widgets/textarea');
-widget['Textbox']       = widget['textbox']       = require('./widgets/textbox');
-widget['Button']        = widget['button']        = require('./widgets/button');
-widget['ProgressBar']   = widget['progressbar']   = require('./widgets/progressbar');
-widget['FileManager']   = widget['filemanager']   = require('./widgets/filemanager');
-widget['Checkbox']      = widget['checkbox']      = require('./widgets/checkbox');
-widget['RadioSet']      = widget['radioset']      = require('./widgets/radioset');
-widget['RadioButton']   = widget['radiobutton']   = require('./widgets/radiobutton');
-widget['Prompt']        = widget['prompt']        = require('./widgets/prompt');
-widget['Question']      = widget['question']      = require('./widgets/question');
-widget['Message']       = widget['message']       = require('./widgets/message');
-widget['Loading']       = widget['loading']       = require('./widgets/loading');
-widget['Listbar']       = widget['listbar']       = require('./widgets/listbar');
-widget['Log']           = widget['log']           = require('./widgets/log');
-widget['Table']         = widget['table']         = require('./widgets/table');
-widget['ListTable']     = widget['listtable']     = require('./widgets/listtable');
-widget['Terminal']      = widget['terminal']      = require('./widgets/terminal');
-widget['Image']         = widget['image']         = require('./widgets/image');
-widget['ANSIImage']     = widget['ansiimage']     = require('./widgets/ansiimage');
-widget['OverlayImage']  = widget['overlayimage']  = require('./widgets/overlayimage');
-widget['Video']         = widget['video']         = require('./widgets/video');
-widget['Layout']        = widget['layout']        = require('./widgets/layout');
-`;
-
-const patchedWidget = widgetSrc.replace(
-	/widget\.classes\.forEach\(function\(name\)[\s\S]*?\}\);/,
-	staticRequires
-);
-writeFileSync(widgetPath, patchedWidget);
-console.log(`  ✓ Patched blessed/lib/widget.js (static requires)`);
-
-// --- Bundle with esbuild (resolves blessed's dynamic requires) ---
-
-const bundleFile = `dist/bundle.cjs`;
-mkdirSync("dist", { recursive: true });
-
-const esbuildCmd = [
-	"./node_modules/.bin/esbuild index.js",
-	"--bundle",
-	"--platform=node",
-	"--format=cjs",
-	"--external:term.js",
-	"--external:pty.js",
-	"--external:fsevents",
-	`--outfile=${bundleFile}`,
-	"--log-level=warning",
-].join(" ");
-
-console.log(`  → Bundling with esbuild...`);
-try {
-	execSync(esbuildCmd, { stdio: "pipe" });
-	console.log(`  ✓ Bundled to ${bundleFile}`);
-} catch (e) {
-	console.error(`  ✗ esbuild failed: ${e.stderr?.toString() || e.message}`);
-	process.exit(1);
-}
-
-// --- Compile binaries ---
+// --- Compile binaries with bun build --compile ---
+// Note: @opentui/core uses a native addon loaded dynamically per platform/arch.
+// Cross-compilation only works for the current host platform.
+// Run this script on each target platform (macOS arm64, macOS x64, Linux x64, Linux arm64)
+// to produce all binaries, or use CI.
 
 const outDir = `dist/bin/v${version}`;
 mkdirSync(outDir, { recursive: true });
 
 const targets = [
-	{ target: "bun-darwin-arm64", name: "slopdiff-macos-arm64" },
-	{ target: "bun-darwin-x64", name: "slopdiff-macos-x64" },
-	{ target: "bun-linux-x64", name: "slopdiff-linux-x64" },
-	{ target: "bun-linux-arm64", name: "slopdiff-linux-arm64" },
+	{ target: "bun-darwin-arm64",  name: "slopdiff-macos-arm64",  platform: "darwin", arch: "arm64"   },
+	{ target: "bun-darwin-x64",    name: "slopdiff-macos-x64",    platform: "darwin", arch: "x64"     },
+	{ target: "bun-linux-x64",     name: "slopdiff-linux-x64",    platform: "linux",  arch: "x64"     },
+	{ target: "bun-linux-arm64",   name: "slopdiff-linux-arm64",  platform: "linux",  arch: "arm64"   },
 ];
 
-for (const { target, name } of targets) {
+const currentPlatform = process.platform;
+const currentArch = process.arch;
+
+for (const { target, name, platform, arch } of targets) {
 	const outFile = `${outDir}/${name}`;
-	const cmd = `bun build --compile --target=${target} --external term.js --external pty.js ${bundleFile} --outfile ${outFile}`;
+	if (platform !== currentPlatform || arch !== currentArch) {
+		console.log(`  ⚠ Skipping ${name} (cross-compile not supported with native addon — run on ${platform}/${arch})`);
+		continue;
+	}
+	const cmd = `bun build --compile --target=${target} index.js --outfile ${outFile}`;
 	console.log(`  → Compiling ${name}...`);
 	try {
 		execSync(cmd, { stdio: "pipe" });

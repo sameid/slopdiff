@@ -38,7 +38,6 @@ PROFILES=(
 
 for PROFILE in "${PROFILES[@]}"; do
   if [ -f "$PROFILE" ] && grep -q ".slopdiff/bin" "$PROFILE" 2>/dev/null; then
-    # Remove the comment line and the export/set line
     if [[ "$PROFILE" == *fish* ]]; then
       sed -i.bak '/# slopdiff/d; /slopdiff\/bin/d' "$PROFILE" && rm -f "$PROFILE.bak"
     else
