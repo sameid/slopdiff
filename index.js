@@ -50,7 +50,7 @@ addDefaultParsers([
 	},
 ]);
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 // --- CLI flags ---
 const args = process.argv.slice(2);
