@@ -1,6 +1,6 @@
 {
 	"name": "slopdiff",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"type": "module",
 	"description": "Terminal diff viewer with staging and file collapse",
 	"main": "index.js",
@@ -9,11 +9,7 @@
 	},
 	"scripts": {
 		"start": "node index.js",
-		"build": "bun build --compile --external term.js --external pty.js index.js --outfile dist/bin/slopdiff",
-		"build:linux": "bun build --compile --target=bun-linux-x64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-linux-x64",
-		"build:mac-arm": "bun build --compile --target=bun-darwin-arm64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-macos-arm64",
-		"build:mac-x64": "bun build --compile --target=bun-darwin-x64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-macos-x64",
-		"build:all": "bun build --compile --target=bun-darwin-arm64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-macos-arm64 && bun build --compile --target=bun-darwin-x64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-macos-x64 && bun build --compile --target=bun-linux-x64 --external term.js --external pty.js index.js --outfile dist/bin/slopdiff-linux-x64"
+		"build": "node build.js"
 	},
 	"keywords": [],
 	"author": "",
