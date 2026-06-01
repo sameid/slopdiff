@@ -9,7 +9,7 @@ import { createHighlighter, bundledLanguages } from "shiki";
 import path from "path";
 import fs from "fs";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 // --- CLI flags ---
 const args = process.argv.slice(2);
@@ -17,6 +17,87 @@ const args = process.argv.slice(2);
 if (args.includes("--version") || args.includes("-v")) {
 	console.log(`slopdiff v${VERSION}`);
 	process.exit(0);
+}
+
+if (args[0] === "update") {
+	runUpdate().then(() => process.exit(0)).catch((e) => {
+		console.error(`  ✗ ${e.message}`);
+		process.exit(1);
+	});
+} else {
+	startTUI();
+}
+
+async function runUpdate() {
+	const CDN = "https://cdn.sameidusmani.com/slopdiff";
+
+	// Detect platform
+	const os = process.platform;
+	const arch = process.arch;
+	let binary;
+	if (os === "darwin" && arch === "arm64") binary = "slopdiff-macos-arm64";
+	else if (os === "darwin" && arch === "x64") binary = "slopdiff-macos-x64";
+	else if (os === "linux" && arch === "x64") binary = "slopdiff-linux-x64";
+	else if (os === "linux" && arch === "arm64") binary = "slopdiff-linux-arm64";
+	else {
+		console.error(`  ✗ Unsupported platform: ${os}/${arch}`);
+		process.exit(1);
+	}
+
+	// Fetch latest version by parsing the version out of install.sh
+	let latestVersion;
+	try {
+		const res = await fetch(`${CDN}/install.sh`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const text = await res.text();
+		const match = text.match(/BASE_URL="[^"]+\/v([^/"]+)"/);
+		if (!match) throw new Error("Could not parse version from install.sh");
+		latestVersion = match[1];
+	} catch (e) {
+		console.error(`  ✗ Could not fetch latest version: ${e.message}`);
+		process.exit(1);
+	}
+
+	if (latestVersion === VERSION) {
+		console.log(`  ✓ Already up to date (v${VERSION})`);
+		return;
+	}
+
+	console.log(`  → Updating slopdiff v${VERSION} → v${latestVersion}...`);
+
+	// Determine install path (the currently running executable)
+	const selfPath = process.execPath;
+
+	// Download new binary
+	const url = `${CDN}/bin/v${latestVersion}/${binary}`;
+	let data;
+	try {
+		const res = await fetch(url);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		data = Buffer.from(await res.arrayBuffer());
+	} catch (e) {
+		console.error(`  ✗ Download failed: ${e.message}`);
+		process.exit(1);
+	}
+
+	// Write to a temp file next to self, then rename (atomic swap)
+	const tmpPath = selfPath + ".tmp";
+	try {
+		fs.writeFileSync(tmpPath, data, { mode: 0o755 });
+		fs.renameSync(tmpPath, selfPath);
+	} catch (e) {
+		// If rename fails (e.g. cross-device), fall back to copy+delete
+		try {
+			fs.copyFileSync(tmpPath, selfPath);
+			fs.chmodSync(selfPath, 0o755);
+			fs.unlinkSync(tmpPath);
+		} catch (e2) {
+			console.error(`  ✗ Failed to replace binary: ${e2.message}`);
+			process.exit(1);
+		}
+	}
+
+	console.log(`  ✓ slopdiff updated to v${latestVersion}`);
 }
 
 const cmdIdx = args.indexOf("--cmd");
@@ -855,4 +936,6 @@ async function main() {
 	diffBox.focus();
 }
 
-main();
+function startTUI() {
+	main();
+}

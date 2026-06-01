@@ -34,6 +34,14 @@ curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 
 Installs to `~/.slopdiff/bin/slopdiff` and adds it to your PATH.
 
+### Uninstall
+
+```bash
+curl -fsSL https://cdn.sameidusmani.com/slopdiff/uninstall.sh | sh
+```
+
+Removes `~/.slopdiff/` and cleans up the PATH entry from your shell profile.
+
 ### Manual
 
 Download the binary for your platform from `https://cdn.sameidusmani.com/slopdiff/bin/v{version}/` and put it somewhere on your PATH:

@@ -2,7 +2,7 @@
 set -e
 
 # ─────────────────────────────────────────────
-#  slopdiff installer v0.1.0
+#  slopdiff installer v0.1.1
 #  curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 # ─────────────────────────────────────────────
 
@@ -15,10 +15,10 @@ RESET='\033[0m'
 
 INSTALL_DIR="$HOME/.slopdiff"
 BIN_DIR="$INSTALL_DIR/bin"
-BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v0.1.0"
+BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v0.1.1"
 
 echo ""
-echo -e "${BOLD}${CYAN}  ◉ slopdiff installer v0.1.0${RESET}"
+echo -e "${BOLD}${CYAN}  ◉ slopdiff installer v0.1.1${RESET}"
 echo ""
 
 # ── Detect platform ───────────────────────────
@@ -87,7 +87,7 @@ fi
 # ── Done ─────────────────────────────────────
 
 echo ""
-echo -e "${GREEN}  ✓ slopdiff v0.1.0 installed!${RESET}"
+echo -e "${GREEN}  ✓ slopdiff v0.1.1 installed!${RESET}"
 echo ""
 echo -e "${BOLD}  Quick start:${RESET}"
 echo ""
