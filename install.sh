@@ -2,7 +2,7 @@
 set -e
 
 # ─────────────────────────────────────────────
-#  slopdiff installer v0.1.1
+#  slopdiff installer v0.2.0
 #  curl -fsSL https://cdn.sameidusmani.com/slopdiff/install.sh | sh
 # ─────────────────────────────────────────────
 
@@ -15,13 +15,11 @@ RESET='\033[0m'
 
 INSTALL_DIR="$HOME/.slopdiff"
 BIN_DIR="$INSTALL_DIR/bin"
-BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v0.1.1"
+BASE_URL="https://cdn.sameidusmani.com/slopdiff/bin/v0.2.0"
 
 echo ""
-echo -e "${BOLD}${CYAN}  ◉ slopdiff installer v0.1.1${RESET}"
+echo -e "${BOLD}${CYAN}  ◉ slopdiff installer v0.2.0${RESET}"
 echo ""
-
-# ── Detect platform ───────────────────────────
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -46,10 +44,7 @@ esac
 
 echo -e "${DIM}  Platform: $OS/$ARCH${RESET}"
 
-# ── Download ──────────────────────────────────
-
 mkdir -p "$BIN_DIR"
-
 echo -e "${DIM}  Downloading $BINARY...${RESET}"
 
 if command -v curl &>/dev/null; then
@@ -63,8 +58,6 @@ fi
 
 chmod +x "$BIN_DIR/slopdiff"
 echo -e "${DIM}  ✓ Downloaded${RESET}"
-
-# ── Add to PATH ───────────────────────────────
 
 SHELL_NAME=$(basename "$SHELL")
 PROFILE_FILE="$HOME/.zshrc"
@@ -84,10 +77,8 @@ if ! grep -q ".slopdiff/bin" "$PROFILE_FILE" 2>/dev/null; then
   echo -e "${DIM}  ✓ Added to PATH in $PROFILE_FILE${RESET}"
 fi
 
-# ── Done ─────────────────────────────────────
-
 echo ""
-echo -e "${GREEN}  ✓ slopdiff v0.1.1 installed!${RESET}"
+echo -e "${GREEN}  ✓ slopdiff v0.2.0 installed!${RESET}"
 echo ""
 echo -e "${BOLD}  Quick start:${RESET}"
 echo ""
