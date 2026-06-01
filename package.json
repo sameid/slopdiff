@@ -13,7 +13,7 @@
 	},
 	"keywords": [],
 	"author": "",
-	"license": "ISC",
+	"license": "MIT",
 	"dependencies": {
 		"blessed": "^0.1.81",
 		"shiki": "^4.1.0"

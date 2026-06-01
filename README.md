@@ -139,4 +139,4 @@ Upload the contents of `dist/v{version}/` and the updated `install.sh` to your s
 
 ## License
 
-ISC
+MIT
